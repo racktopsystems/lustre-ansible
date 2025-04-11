@@ -1,0 +1,6 @@
+---
+- name: Configure NTP servers
+  ansible.builtin.template:
+    src: templates/etc/chrony.conf.j2
+    dest: /tmp/chrony.conf.test
+  notify: Restart NTP

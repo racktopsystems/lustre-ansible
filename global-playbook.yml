@@ -1,0 +1,42 @@
+---
+- name: Aggregates all specific playbooks (meta playbook)
+  hosts: lustre_nodes
+  become: yes
+  gather_facts: yes
+  # gather_facts: no
+  vars:
+    hb_iface_desired_name: "hb0"
+    netconfig_dir: /etc/sysconfig/network-scripts
+    ntp_servers:
+      - "0.pool.ntp.org"
+      - "1.pool.ntp.org"
+    ipmi_username: "testuser" # Name of the IPMI user to create
+    ipmi_user_id: 4
+    ipmi_password_hash_file: /var/tmp/ipmi-hash
+    ipmi_password_hash_file_mode: "0400"
+    update_necessary: true
+    hide_sensitive_output: false
+
+  tasks:
+    # Tasks for SELinux disablement
+    - import_tasks: tasks/selinux.yml
+    #
+    # Tasks for NTP configuration
+    - import_tasks: tasks/ntp-setup.yml
+    # Tasks for configuring HA
+    - import_tasks: tasks/heartbeat.yml
+    - import_tasks: tasks/ha-setup.yml
+    - import_tasks: tasks/ha-hooks-setup.yml
+    #
+    # Tasks for configuring Infiniband interfaces
+    - import_tasks: tasks/ib-setup.yml
+    #
+    # Tasks for configuring Lnet
+    - import_tasks: tasks/lnet-setup.yml
+    # Tasks for installing Lustre software
+    #
+    # Tasks for configuring Luste filesystems and services
+    - import_tasks: tasks/lustre-storage.yml
+
+  handlers:
+    - import_tasks: handlers/handlers.yml

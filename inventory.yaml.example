@@ -1,0 +1,55 @@
+clients:
+  hosts:
+    192.168.10.1:
+      default_gw_ipaddr:
+      hostname: rhel8-client1
+      hb_iface_ipaddr: 192.255.0.2
+      ipmi_ipaddr: 10.100.100.1
+      ipmi_netmask: 255.255.255.0
+      mgmt_iface: ens259f0
+
+# Place all the object storage hosts in this group. Each ost host should be a
+# key in the hosts hash.
+ost:
+  hosts:
+    192.168.10.2:
+      hb_iface_ipaddr: 192.255.0.1
+      hostname: rhel8-oss1
+      ib_addrs:
+        ib0: 192.168.2.12
+        ib1: null
+    192.168.10.3:
+      hb_iface_ipaddr: 192.255.0.2
+      hostname: rhel8-oss2
+      ib_addrs:
+        ib0: 192.168.2.14
+        ib1: null
+
+# Place all the metadata and management hosts in this group. Each mdt host
+# should be a key in the hosts hash.
+mdt:
+  hosts:
+    192.168.10.4:
+      hb_iface_ipaddr: 192.255.0.1
+      hostname: rhel8-mdt1
+      ib_addrs:
+        ib0: null
+        ib1: 192.168.2.16
+      peers:
+    192.168.10.5:
+      hb_iface_ipaddr: 192.255.0.2
+      hostname: rhel8-mdt2
+      ib_addrs:
+        ib0: null
+        ib1: 192.168.2.18
+      peers:
+
+# This creates the lustre_nodes group and assigns the 'mdt' and 'ost' host
+# groups to it.
+lustre_nodes:
+  # This children namespace is required by Ansible. It simply makes explicit
+  # the fact that the ost and mdt groups are children of the lustre_nodes
+  # group.
+  children:
+    ost:
+    mdt:

@@ -1,0 +1,34 @@
+---
+- name: Configure scripts triggered by HA during import and export
+  vars:
+    etc_hiavd_dir: /etc/racktop/hiavd
+
+  block:
+    - name: Set pre and post script paths in the HA config file
+      ansible.builtin.lineinfile:
+        path: "{{ etc_hiavd_dir }}/hiavd.conf"
+        search_string: "{{ item[0] }}"
+        line: "{{ item[1] }}"
+      loop:
+        - [
+            "PreExportHook = ",
+            'PreExportHook = "{{ etc_hiavd_dir }}/pre-export.sh"',
+          ]
+        - [
+            "PostImportHook = ",
+            'PostImportHook = "{{ etc_hiavd_dir }}/post-import.sh"',
+          ]
+
+    - name: Create post-import HA script
+      ansible.builtin.template:
+        src: ../templates/{{ etc_hiavd_dir }}/post-import.sh.j2
+        dest: "{{ etc_hiavd_dir }}/post-import.sh"
+        mode: 0755
+
+    - name: Create pre-export HA script
+      ansible.builtin.template:
+        src: ../templates/{{ etc_hiavd_dir }}/pre-export.sh.j2
+        dest: "{{ etc_hiavd_dir }}/pre-export.sh"
+        mode: 0755
+
+  notify: Restart hiavd service

@@ -1,0 +1,164 @@
+---
+- name: Check for existence of pool {{mgs_dataset_on_pool}}
+  ansible.builtin.stat:
+    path: /proc/spl/kstat/zfs/{{ mgs_dataset_on_pool }}/state
+  register: stat_pool_state_result
+  when:
+    - inventory_hostname in groups['mdt']
+
+- name: Check for already configured Lustre management server
+  ansible.builtin.command:
+    cmd: |
+      zfs list -Honame {{ mgs_dataset_on_pool }}/lustre-mgt
+  register: mgt_confd_result
+  failed_when: false
+  changed_when: false
+  when:
+    - inventory_hostname in groups['mdt']
+
+- name: Configure Lustre management server if not already configured
+  vars:
+    prefix: " --servicenode="
+    suffix: "@o2ib"
+    servicenode_cmd_args: "{{ [prefix] | product(mds_mgsnode_ip_addrs) | map('join') | product([suffix]) | map('join') | list | join | trim }}"
+  ansible.builtin.command:
+    cmd: >
+      mkfs.lustre --mgs --fsname={{ filesystem_name }}
+        {{ servicenode_cmd_args }}
+        --backfstype=zfs --mkfsoptions="mountpoint=none"
+        {{ mgs_dataset_on_pool }}/lustre-mgt
+  when:
+    - inventory_hostname in groups['mdt']
+    - stat_pool_state_result.stat.exists
+    - mgt_confd_result.rc != 0
+
+- name: Create required Lustre mgt mountpoint(s)
+  ansible.builtin.file:
+    state: directory
+    path: /storage/{{mgs_dataset_on_pool}}/lustre-mgt
+  when:
+    - inventory_hostname in groups['mdt']
+
+- name: Mount the lustre-mgt dataset
+  ansible.posix.mount:
+    fstype: lustre
+    state: mounted
+    src: "{{mgs_dataset_on_pool}}/lustre-mgt"
+    path: /storage/{{mgs_dataset_on_pool}}/lustre-mgt
+  when:
+    - inventory_hostname in groups['mdt']
+    - stat_pool_state_result.stat.exists
+
+# Metadata server configuration below
+
+- name: Check for already configured Lustre metadata server
+  ansible.builtin.command:
+    cmd: |
+      zfs list -Honame {{ mgs_dataset_on_pool }}/{{ item }}
+  register: mdt_confd_result
+  failed_when: false
+  changed_when: false
+  loop: "{{ mdt_mountpoints[mds_dataset_on_pool] }}"
+  when:
+    - inventory_hostname in groups['mdt']
+
+- name: Configure Lustre metadata server if not already configured
+  vars:
+    prefix_a: " --mgsnode="
+    prefix_b: " --servicenode="
+    suffix: "@o2ib"
+    mgsnode_cmd_args: "{{ [prefix_a] | product(mds_mgsnode_ip_addrs) | map('join') | product([suffix]) | map('join') | list | join | trim  }}"
+    servicenode_cmd_args: "{{ [prefix_b] | product(mds_mgsnode_ip_addrs) | map('join') | product([suffix]) | map('join') | list | join | trim }}"
+  ansible.builtin.command:
+    cmd: >
+      mkfs.lustre --mdt --fsname={{ filesystem_name }} --index=0
+        {{ mgsnode_cmd_args }}
+        {{ servicenode_cmd_args }}
+        --mkfsoptions="recordsize=128k -o compression=lz4 -o mountpoint=none"
+        --backfstype=zfs {{ mds_dataset_on_pool }}/{{ item }}
+  loop: "{{ mdt_mountpoints[mds_dataset_on_pool] }}"
+  loop_control:
+    index_var: idx
+  when:
+    - inventory_hostname in groups['mdt']
+    - stat_pool_state_result.stat.exists
+    - mdt_confd_result.results[idx].rc != 0
+
+- name: Create required Lustre mds mountpoint(s)
+  ansible.builtin.file:
+    state: directory
+    path: /storage/{{ mds_dataset_on_pool }}/{{ item }}
+  loop: "{{ mdt_mountpoints[mds_dataset_on_pool] }}"
+  when:
+    - inventory_hostname in groups['mdt']
+
+- name: Mount required mds dataset
+  ansible.posix.mount:
+    fstype: lustre
+    state: mounted
+    src: "{{mds_dataset_on_pool}}/{{item}}"
+    path: /storage/{{mds_dataset_on_pool}}/{{item}}
+  loop: "{{mdt_mountpoints[mds_dataset_on_pool]}}"
+  when:
+    - inventory_hostname in groups['mdt']
+    - stat_pool_state_result.stat.exists
+
+# Object Storage configuration below
+- name: Check for existence of pool {{oss_dataset_on_pool}}
+  ansible.builtin.stat:
+    path: /proc/spl/kstat/zfs/{{ oss_dataset_on_pool }}/state
+  register: stat_pool_state_result
+  when:
+    - inventory_hostname in groups['ost']
+
+- name: Check for already configured Lustre object storage server
+  ansible.builtin.command:
+    cmd: |
+      zfs list -Honame {{ oss_dataset_on_pool }}/{{ item }}
+  loop: "{{ ost_mountpoints[oss_dataset_on_pool] }}"
+  register: ost_confd_result
+  failed_when: false
+  changed_when: false
+  when:
+    - inventory_hostname in groups['ost']
+
+- name: Configure Lustre object storage server if not already configured
+  vars:
+    prefix_a: " --mgsnode="
+    prefix_b: " --servicenode="
+    suffix: "@o2ib"
+    mgsnode_cmd_args: "{{ [prefix_a] | product(oss_mgsnode_ip_addrs) | map('join') | product([suffix]) | map('join') | list | join | trim  }}"
+    servicenode_cmd_args: "{{ [prefix_b] | product(oss_node_ip_addrs) | map('join') | product([suffix]) | map('join') | list | join | trim }}"
+  ansible.builtin.command:
+    cmd: >
+      mkfs.lustre --ost --fsname={{ filesystem_name }} --index=0
+        {{ mgsnode_cmd_args }}
+        {{ servicenode_cmd_args }}
+        --mkfsoptions="recordsize=1M -o compression=lz4 -o mountpoint=none"
+        --backfstype=zfs {{ oss_dataset_on_pool }}/lustre-ost00
+  loop: "{{ ost_mountpoints[oss_dataset_on_pool] }}"
+  loop_control:
+    index_var: idx
+  when:
+    - inventory_hostname in groups['ost']
+    - stat_pool_state_result.stat.exists
+    - ost_confd_result.results[idx].rc != 0
+
+- name: Create required Lustre oss mountpoint(s)
+  ansible.builtin.file:
+    state: directory
+    path: /storage/{{ oss_dataset_on_pool }}/{{ item }}
+  loop: "{{ ost_mountpoints[oss_dataset_on_pool] }}"
+  when:
+    - inventory_hostname in groups['ost']
+
+- name: Mount required oss dataset(s)
+  ansible.posix.mount:
+    fstype: lustre
+    state: mounted
+    src: "{{ mds_dataset_on_pool }}/{{ item }}"
+    path: /storage/{{ oss_dataset_on_pool }}/{{ item }}
+  loop: "{{ ost_mountpoints[oss_dataset_on_pool] }}"
+  when:
+    - inventory_hostname in groups['ost']
+    - stat_pool_state_result.stat.exists

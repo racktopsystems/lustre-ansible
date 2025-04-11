@@ -1,0 +1,43 @@
+---
+# IPv4 netmask used by all configured IB interfaces.
+ib_netmask: 24
+
+# Name of the clustered filesystem exposed to the clients.
+filesystem_name: bsrfs
+
+# Infiniband IPv4 addresses of all management server nodes.
+mgs_node_ip_addrs:
+  - 192.168.100.16
+  - 192.168.100.18
+
+# Infiniband IPv4 addresses of all metadata server nodes.
+mds_mgsnode_ip_addrs:
+  - 192.168.100.16
+  - 192.168.100.18
+
+# Infiniband IPv4 addresses of all management server nodes accessed by OSS nodes.
+oss_mgsnode_ip_addrs:
+  - 192.168.100.16
+  - 192.168.100.18
+
+# Infiniband IPv4 addresses of all object storage server nodes.
+oss_node_ip_addrs:
+  - 192.168.100.12
+  - 192.168.100.14
+
+# Location of the management server dataset.
+mgs_dataset_on_pool: p01
+# Location of the metadata server dataset.
+mds_dataset_on_pool: p01
+# Location of the object storage server datasets.
+# At this time only one ZFS pool is supported. We should be able to support
+#  more than a single pool.
+oss_dataset_on_pool: p01
+# Names of the metadata target mountpoints.
+mdt_mountpoints:
+  p01:
+    - lustre-mdt00
+# Names of the object storage target mountpoints.
+ost_mountpoints:
+  p01:
+    - lustre-ost00

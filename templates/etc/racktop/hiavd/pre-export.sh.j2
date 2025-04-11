@@ -1,0 +1,53 @@
+#!/bin/bash
+# Copyright {{ now(utc=true,fmt='%Y') }} RackTop Systems Inc. and/or its affiliates.
+# http://www.racktopsystems.com
+#
+# The methods and techniques utilized herein are considered TRADE SECRETS
+# and/or CONFIDENTIAL unless otherwise noted. REPRODUCTION or DISTRIBUTION
+# is FORBIDDEN, in whole and/or in part, except by express written permission
+# of RackTop Systems.
+
+# List lustre datasets here as one on each line no delimiters
+dslist=(
+{% for dataset in mdt_mountpoints[mds_dataset_on_pool] %}
+  {{ mds_dataset_on_pool }}/{{ dataset }}
+{% endfor %}
+  {{ mgs_dataset_on_pool }}/lustre-mgt
+)
+
+# echo `date --rfc-3339=seconds` : pre $1 >> /etc/racktop/hiavd/sh.log
+
+info() {
+  echo $@
+}
+
+dsumount() {
+  set +e
+  ds=$1
+  mnt="/storage/${ds}"
+  info "Unmounting ${mnt}"
+  res=`umount $mnt 2>&1`
+  if [[ $? != 0 ]]; then
+    if [[ "${res}" =~ .*not\ mounted ]]; then
+      # continue since dataset not mounted
+      info "Dataset ${ds} not mounted"
+    else
+      # can't unmount, block here
+      exit 1
+    fi
+  fi
+  set -e
+}
+
+pool_name=$1
+if [[ -z "${pool_name}" ]]; then
+  echo "Must provide a pool name"
+  exit 1
+fi
+
+for ds in "${dslist[@]}"; do
+  pool="${ds%%"/"*}"
+  if [[ "${pool}" == "${pool_name}" ]]; then
+     dsumount "${ds}"
+  fi
+done

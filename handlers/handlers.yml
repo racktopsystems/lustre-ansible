@@ -1,0 +1,19 @@
+---
+- name: Reboot system
+  ansible.builtin.reboot:
+    msg: "Rebooting to apply SELinux changes"
+
+- name: Restart hiavd service
+  ansible.builtin.systemd_service:
+    name: hiavd
+    state: restarted
+
+- name: Restart network
+  ansible.builtin.service:
+    name: NetworkManager
+    state: restarted
+
+- name: Restart NTP
+  ansible.builtin.service:
+    name: ntpd
+    state: restarted

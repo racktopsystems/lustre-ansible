@@ -1,0 +1,18 @@
+---
+- name: Configure the ib0 interface via NetworkManager
+  community.general.nmcli:
+    conn_name: ib0
+    ifname: ib0
+    type: infiniband
+    ip4: "{{ ib_addrs['ib0'] }}/{{ ib_netmask }}"
+    state: present
+  when: ib_addrs['ib0'] != None
+
+- name: Configure the ib1 interface via NetworkManager
+  community.general.nmcli:
+    conn_name: ib1
+    ifname: ib1
+    type: infiniband
+    ip4: "{{ ib_addrs['ib1'] }}/{{ ib_netmask }}"
+    state: present
+  when: ib_addrs['ib1'] != None
