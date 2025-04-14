@@ -16,11 +16,16 @@
     ipmi_password_hash_file_mode: "0400"
     update_necessary: true
     hide_sensitive_output: false
+    # Location of the offline registration file on the remote systems.
+    offline_reg_filename: /tmp/oreg
+    # Name of the temporary user to create for the purposes of registration.
+    offline_reg_user: ansiblereg
+    offline_reg_password: "{{ lookup('password', '/dev/null chars=ascii_letters,digit length=12', seed=now(utc=true,fmt='%s')) }}"
 
   tasks:
     # Tasks for SELinux disablement
     - import_tasks: tasks/selinux.yml
-    #
+    - import_tasks: tasks/registration.yml
     # Tasks for NTP configuration
     - import_tasks: tasks/ntp-setup.yml
     # Tasks for configuring HA

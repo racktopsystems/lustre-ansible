@@ -1,0 +1,46 @@
+---
+- name: Create fact with {{ offline_reg_user }} password information
+  vars:
+    cleartext: "{{ lookup('password', '/dev/null chars=ascii_letters,digit length=12', seed=now(utc=true,fmt='%s')) }}"
+  ansible.builtin.set_fact:
+    offline_reg_password_hash:
+      cleartext: "{{cleartext}}"
+      hash: "{{cleartext | password_hash}}"
+
+- name: Create temporary user for authentication with the API
+  ansible.builtin.user:
+    append: true
+    create_home: false
+    groups: bsradmins
+    name: "{{ offline_reg_user }}"
+    password: "{{ offline_reg_password_hash['hash'] }}"
+    state: present
+
+- name: Copy and unzip the offline registration file to the system
+  ansible.builtin.copy:
+    src: inputs/registration/{{ hostname }}.oreg
+    dest: "{{ offline_reg_filename }}"
+
+- name: Extract the archive
+  decode_unzip:
+    src: "{{ offline_reg_filename }}"
+    dest: "{{ offline_reg_filename }}-extracted"
+    creates: "{{ offline_reg_filename }}-extracted/licenses.txt"
+
+- name: Perform offline registration and install license keys
+  # We store all the necessary details in the environment. The script looks
+  # these variables up and passes them through via cURL commands to
+  # bsrapid.
+  environment:
+    USER: "{{ offline_reg_user }}"
+    PASSWORD: "{{ offline_reg_password_hash['cleartext'] }}"
+    OREG_FILENAME: "{{ offline_reg_filename }}"
+    OREG_LIC_KEYS_FILENAME: "{{ offline_reg_filename }}-extracted/licenses.txt"
+    EULA_ACCEPT_NAME: "System Administrator"
+  ansible.builtin.script:
+    cmd: scripts/register.sh
+
+- name: Remove temporary user for authentication with the API
+  ansible.builtin.user:
+    name: "{{ offline_reg_user }}"
+    state: absent
