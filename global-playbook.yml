@@ -25,6 +25,7 @@
   tasks:
     # Tasks for SELinux disablement
     - import_tasks: tasks/selinux.yml
+    # Tasks for system registration.
     - import_tasks: tasks/registration.yml
     # Tasks for NTP configuration
     - import_tasks: tasks/ntp-setup.yml

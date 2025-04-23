@@ -1,6 +1,8 @@
 # lustre-ansible
 This repository contains scripts and Ansible-powered IaC playbooks for configuring RackTop's Linux-based Lustre configurations. This is work in progress and is at this moment not complete. There are a number of gaps in this stack and over time we are going to be filling them.
 
+At this moment we can only support a single pool, because we use the name of the pool as an index (think hash table) and the tasks which use this approach do not loop through a list of pools. Instead, a variable stores the name of the pool and that variable is used as a key into the hash.
+
 ## Capabilities
 ### Out of scope
 Once this project is fully implemented we expect certain functions to remain out of scope. The following things are going to remain out of scope for the foreseable future:
@@ -12,7 +14,7 @@ Once this project is fully implemented we expect certain functions to remain out
 
 ### What should be covered
 - BMC (remote management)
-- Licensing of the systems
+- Licensing and registration of the systems
 - Basic network configuration beyond the "primary" interface, such as the heartbeat, infiniband, etc.
 - Common system settings such as DNS, NTP, SELinux
 - High availability and associated resource groups
@@ -30,6 +32,9 @@ The `handlers` directory like the tasks directory contains a number of YAML file
 
 ### _templates_ directory
 The `templates` directory contains configuration file templates which Ansible is responsible for rendering and placing on the remote systems.
+
+### _library_ directory
+The `library` directory contains custom modules. As long as tasks are imported into the global playbook they are going to have access to custom modules in this directory.
 
 ## Getting started
 ### Setting up environment
@@ -91,6 +96,10 @@ ost:
 In addition to the inventory file which contains _all_ remote systems that Ansible needs to know about we created a `group_vars/example_lustre_nodes` variables file. This file should be named `lustre_nodes`, which will match the name of the group defined in the inventory file. Thus, variables in this file will be made available at runtime to all systems in the inventory which belong to the `lustre_nodes` group. This file is meant to provide environment-specific parameters, but unlike the inventory file where variables are specific to each system, these variables will apply to _all_ members of the `lustre_nodes` group.
 
 ## Running the playbook
+### Runtime dependencies
+#### Offline Registration
+Among other things, one of the steps is registration of the systems. In order for registration to happen, because these systems have no access to the Internet, offline registration files must be provided. RackTop is expected to supply offline registration files for each system. All registration files must be renamed such that the filename matches the hostname specified in the inventory file plus the `.oreg` extension. These files must reside in the `inputs/registration` directory. Thus, if a hostname assigned to a system is `system01`, the filename will be `system01.oreg` and the path relative to the root of this repository is `inputs/registration/system01.oreg`.
+
 As previously mentioned, the `global-playbook.yml` is the primary playbook which aggregates tasks and handlers from several files. This is the playbook which must be executed.
 The following command assumes that the user executing tasks on the remote systems is called `bsradmin`, the password lives in the `bsradminpass` and inventory is in the `inventory.yml` file.
 ```bash
