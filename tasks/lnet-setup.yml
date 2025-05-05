@@ -5,4 +5,4 @@
     dest: "{{ item.dest }}"
     mode: "755"
   loop:
-    - { src: "../templates/etc/lnet.conf.j2", dest: "/etc/lnet.conf-ansible" }
+    - { src: "../templates/etc/lnet.conf.j2", dest: "/etc/lnet.conf" }
