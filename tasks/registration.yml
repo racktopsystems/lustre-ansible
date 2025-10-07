@@ -1,13 +1,20 @@
 ---
-- name: Create fact with {{ offline_reg_user }} password information
+- name: Gather custom IPMI facts for non-witness members
+  registration_facts:
+  when: ( inventory_hostname not in groups['witness'] )
+
+- name: Set fact with {{ offline_reg_user }} password information
   vars:
-    cleartext: "{{ lookup('password', '/dev/null chars=ascii_letters,digit length=12', seed=now(utc=true,fmt='%s')) }}"
+    randpass: "{{ lookup('password', '/dev/null chars=ascii_letters,digit length=12', seed=now(utc=true,fmt='%s')) }}"
   ansible.builtin.set_fact:
     offline_reg_password_hash:
-      cleartext: "{{cleartext}}"
-      hash: "{{cleartext | password_hash}}"
+      cleartext: "{{ randpass }}"
+      hash: "{{ randpass | password_hash }}"
+  when: not system_is_registered
 
-- name: Create temporary user for authentication with the API
+# This creates the user with which we _locally_ authenticate with bsrapid and
+# complete system registration.
+- name: Create temporary {{ offline_reg_user }} user for authentication with the API
   ansible.builtin.user:
     append: true
     create_home: false
@@ -15,17 +22,20 @@
     name: "{{ offline_reg_user }}"
     password: "{{ offline_reg_password_hash['hash'] }}"
     state: present
+  when: not system_is_registered
 
-- name: Copy and unzip the offline registration file to the system
+- name: Transfer the offline registration file to the system
   ansible.builtin.copy:
     src: inputs/registration/{{ hostname }}.oreg
     dest: "{{ offline_reg_filename }}"
+  when: not system_is_registered
 
-- name: Extract the archive
+- name: Extract the offline registration archive
   decode_unzip:
     src: "{{ offline_reg_filename }}"
     dest: "{{ offline_reg_filename }}-extracted"
     creates: "{{ offline_reg_filename }}-extracted/licenses.txt"
+  when: not system_is_registered
 
 - name: Perform offline registration and install license keys
   # We store all the necessary details in the environment. The script looks
@@ -36,11 +46,13 @@
     PASSWORD: "{{ offline_reg_password_hash['cleartext'] }}"
     OREG_FILENAME: "{{ offline_reg_filename }}"
     OREG_LIC_KEYS_FILENAME: "{{ offline_reg_filename }}-extracted/licenses.txt"
-    EULA_ACCEPT_NAME: "System Administrator"
+    EULA_ACCEPT_NAME: "{{ offline_reg_eula_name }}"
   ansible.builtin.script:
     cmd: scripts/register.sh
+  when: not system_is_registered
 
-- name: Remove temporary user for authentication with the API
+- name: Remove temporary user with which offline registration was performed
   ansible.builtin.user:
     name: "{{ offline_reg_user }}"
     state: absent
+  when: not system_is_registered
