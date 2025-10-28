@@ -3,8 +3,6 @@
 import json
 import subprocess
 
-# from dataclasses import dataclass
-from typing import Any
 from ansible.module_utils.basic import AnsibleModule
 
 
@@ -38,7 +36,12 @@ def main():
     try:
         # Run the command
         res = subprocess.check_output(
-            "bsradm -j per view".split(), universal_newlines=True
+            "bsradm -j per view".split(),
+            # Send STDERR to STDOUT to handle the system unregistered case.
+            # In this case the JSON object with an error and lack of
+            # registration indication is written to STDERR instead of STDOUT.
+            stderr=subprocess.STDOUT,
+            universal_newlines=True,
         )
         # Parse and return structured data
         registration, msg = get_system_registration(res)

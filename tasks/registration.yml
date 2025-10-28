@@ -1,7 +1,8 @@
 ---
-- name: Gather custom IPMI facts for non-witness members
+- name: Gather custom registration facts for non-witness members
   registration_facts:
   when: ( inventory_hostname not in groups['witness'] )
+  # failed_when: false
 
 - name: Set fact with {{ offline_reg_user }} password information
   vars:
@@ -11,6 +12,7 @@
       cleartext: "{{ randpass }}"
       hash: "{{ randpass | password_hash }}"
   when: not system_is_registered
+  no_log: "{{ hide_sensitive_output }}"
 
 # This creates the user with which we _locally_ authenticate with bsrapid and
 # complete system registration.
@@ -48,6 +50,7 @@
     OREG_LIC_KEYS_FILENAME: "{{ offline_reg_filename }}-extracted/licenses.txt"
     EULA_ACCEPT_NAME: "{{ offline_reg_eula_name }}"
   ansible.builtin.script:
+    executable: /usr/bin/bash # Required due to the 'noexec' setting on /home
     cmd: scripts/register.sh
   when: not system_is_registered
 
