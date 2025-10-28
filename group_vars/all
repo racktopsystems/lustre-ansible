@@ -1,13 +1,17 @@
     hb_iface_desired_name: "hb0"
     netconfig_dir: /etc/sysconfig/network-scripts
+    # Addresses of NTP servers with which target Lustre nodes should synchronize
+    # their clocks.
     ntp_servers:
       - "0.pool.ntp.org"
       - "1.pool.ntp.org"
-    # IPMI settings should be consistent across systems. The
+    # IPMI settings should be consistent across systems. The username normally
+    # root, but could be sometihng else.
     ipmi_username: "testuser" # Name of the IPMI user to create
     ipmi_user_id: 4
     ipmi_password_hash_file: /var/tmp/ipmi-hash
     ipmi_password_hash_file_mode: "0400"
+    ipmi_setup_script_path: /run/ipmi_user_setup.sh
     update_necessary: true
     hide_sensitive_output: false
     # Location of the offline registration file on the remote systems.
@@ -15,5 +19,6 @@
     # Name of the temporary user to create for the purposes of registration.
     # This user should be removed once it is no-longer required.
     offline_reg_user: ansiblereg
-    # offline_reg_password: "{{ lookup('password', '/dev/null chars=ascii_letters,digit length=12', seed=now(utc=true,fmt='%s')) }}"
+    # Name of the entity accepting the EULA. Should be personalized if the
+    # default value is not acceptable.
     offline_reg_eula_name: "System Administrator"
