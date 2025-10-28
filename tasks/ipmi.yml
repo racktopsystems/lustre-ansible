@@ -1,0 +1,36 @@
+---
+- name: Include secrets from a variables file if not already defined
+  include_vars:
+    file: sensitive/creds.yaml
+    name: sensitive
+  when: sensitive['ipmi_password'] is not defined and configure_ipmi
+  no_log: "{{ hide_sensitive_output }}"
+
+- name: Create IPMI setup script
+  copy:
+    dest: "{{ ipmi_setup_script_path }}"
+    mode: "0755"
+    # The script is created with environment variable references to
+    # keep all sensitive content such as the password from appearing in the
+    # script. We must pass these variables via the environment when the script
+    # is executed.
+    content: |
+      #!/usr/bin/env bash
+      ipmitool user set name ${IPMI_USER_ID} ${IPMI_USERNAME}
+      ipmitool user set password ${IPMI_USER_ID} ${IPMI_PASSWORD}
+      ipmitool user enable ${IPMI_USER_ID}
+      ipmitool channel setaccess 1 ${IPMI_USER_ID} link=on ipmi=on callin=on privilege=4
+  register: reg_ipmi_script_created
+  when: ipmi_present and configure_ipmi
+  notify: Remove IPMI user setup script # ../handlers/handlers.yml
+
+- name: Create IPMI user {{ ipmi_username }}
+  environment:
+    IPMI_PASSWORD: "{{ sensitive['ipmi_password'] }}"
+    IPMI_USER_ID: "{{ ipmi_user_id }}"
+    IPMI_USERNAME: "{{ ipmi_username }}"
+  ansible.builtin.command:
+    cmd: "{{ ipmi_setup_script_path }}"
+  register: reg_ipmi_cmd_result
+  when: ipmi_present and configure_ipmi
+  failed_when: reg_ipmi_cmd_result.rc != 0

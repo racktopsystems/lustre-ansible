@@ -17,3 +17,8 @@
   ansible.builtin.service:
     name: ntpd
     state: restarted
+
+- name: Remove IPMI user setup script
+  ansible.builtin.file:
+    state: absent
+    path: "{{ ipmi_setup_script_path }}"
