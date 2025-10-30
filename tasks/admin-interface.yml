@@ -1,22 +1,31 @@
 ---
-- name: Create necessary persistent interface naming rules
+- name: Setup Management ({{ default_iface_desired_name }}) interface
   vars:
     iface_name: '{{ ansible_default_ipv4.interface or "ens192" if ansible_virtualization_role == "guest" else "ens259f0" }}'
     default_ip_address: "{{ ansible_default_ipv4.address|default(ansible_all_ipv4_addresses[0]) }}"
     mac_address: "{{ ansible_default_ipv4.macaddress or hostvars[default_ip_address]['ansible_' + iface_name].macaddress }}"
     final_iface_name: "{{ default_iface_desired_name }}"
-  lineinfile:
-    path: "{{ net_persistent_rules_file }}"
-    create: yes
-    line: 'SUBSYSTEM=="net", ACTION=="add", ATTR{address}=="{{ mac_address }}", ATTR{type}=="1", NAME="{{ final_iface_name }}"'
-    regexp: 'ATTR{address}=="{{ mac_address }}".*NAME="{{ final_iface_name }}"'
-  notify: Reload udev rules
-  when: iface_name != default_iface_desired_name
 
-- name: Update interface configuration file
-  vars:
-    iface_name: '{{ ansible_default_ipv4.interface or "ens192" if ansible_virtualization_role == "guest" else "ens259f0" }}'
-  update_interface:
-    old_device: "{{ iface_name }}"
-    new_device: "{{ default_iface_desired_name }}"
-  when: iface_name != default_iface_desired_name
+  block:
+    - name: Create necessary {{ default_iface_desired_name }} persistent interface naming rules
+      lineinfile:
+        path: "{{ net_persistent_rules_file }}"
+        create: yes
+        line: 'SUBSYSTEM=="net", ACTION=="add", ATTR{address}=="{{ mac_address }}", ATTR{type}=="1", NAME="{{ final_iface_name }}"'
+        regexp: 'ATTR{address}=="{{ mac_address }}".*NAME="{{ final_iface_name }}"'
+      notify: Reload udev rules
+
+    - name: Update interface configuration file
+      update_interface:
+        old_device: "{{ iface_name }}"
+        new_device: "{{ default_iface_desired_name }}"
+      when: iface_name != default_iface_desired_name
+
+    - name: Set default gateway if necessary
+      ansible.builtin.lineinfile:
+        path: /etc/sysconfig/network
+        line: "GATEWAY={{ default_gw_ipaddr }}"
+        create: yes
+      when: default_gw_ipaddr is defined and default_gw_ipaddr != ""
+
+  notify: Restart network
