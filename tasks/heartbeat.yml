@@ -2,10 +2,6 @@
 - name: Setup HA heartbeat (hb0) interface
   vars:
     hb_kernel_iface: ens259f1 # Kernel-supplied name for the hb interface
-    hb_iface: hb0 # Our desired human-friendly name for the hb interface
-    hb_iface_prefix: 24
-    udev_persistent_net_rules_file: /etc/udev/rules.d/70-persistent-net.rules
-
   block:
     # If the network configuration file for the hb0 interface already exists,
     # we are just going to make sure that it is correct. We do this by reading
@@ -13,18 +9,18 @@
     # we generate a new file with settings we expect, injecting bits we read in
     # previously. Otherwise we just create a new file and generate bits like
     # the UUID.
-    - name: Make sure that the {{ hb_iface }} interface file exists
+    - name: Make sure that the {{ hb_iface_desired_name }} interface file exists
       ansible.builtin.stat:
-        path: "{{ netconfig_dir }}/ifcfg-{{ hb_iface }}"
+        path: "{{ netconfig_dir }}/ifcfg-{{ hb_iface_desired_name }}"
       register: hb_conf_file_result
 
-    - name: Read in contents of the {{hb_iface}} interface file
+    - name: Read in contents of the {{hb_iface_desired_name}} interface file
       ansible.builtin.slurp:
-        src: "{{ netconfig_dir }}/ifcfg-{{ hb_iface }}"
+        src: "{{ netconfig_dir }}/ifcfg-{{ hb_iface_desired_name }}"
       register: reg_iface_file
       when: hb_conf_file_result.stat.exists
 
-    - name: Convert {{ hb_iface }} interface file into a dict
+    - name: Convert {{ hb_iface_desired_name }} interface file into a dict
       vars:
         text: "{{reg_iface_file.content | b64decode | trim }}"
         # This is absolutely horrible, and we should find a better way.
@@ -33,7 +29,7 @@
         cf_iface_file: "{{ dict(pairs) }}"
       when: hb_conf_file_result.stat.exists
 
-    - name: Create facts for {{ hb_iface }} interface file
+    - name: Create facts for {{ hb_iface_desired_name }} interface file
       vars:
         uuid: "{{ ansible_product_uuid | to_uuid }}"
       set_fact:
@@ -42,7 +38,7 @@
 
     - name: Create new interface file for the heartbeat network interface
       ansible.builtin.copy:
-        dest: "{{ netconfig_dir }}/ifcfg-{{ hb_iface }}"
+        dest: "{{ netconfig_dir }}/ifcfg-{{ hb_iface_desired_name }}"
         content: |
           TYPE=Ethernet
           PROXY_METHOD=none
@@ -64,17 +60,10 @@
 
     - name: Create udev rule for the heartbeat network interface renaming
       ansible.builtin.copy:
-        dest: "{{ udev_persistent_net_rules_file }}"
+        dest: "{{ net_persistent_rules_file }}"
         content: |
-          SUBSYSTEM=="net", ACTION=="add", DRIVERS=="?*", ATTR{dev_id}=="0x0", ATTR{type}=="1", KERNEL=="{{ hb_kernel_iface }}", NAME="{{ hb_iface }}"
-      register: udevrules
-
-    - name: Reload udev rules if the {{ hb_iface }} network interface was renamed
-      command: "{{ item }}"
-      with_items:
-        - udevadm control --reload-rules
-        - udevadm trigger --subsystem-match=net --action=add
-      when: udevrules.changed
+          SUBSYSTEM=="net", ACTION=="add", DRIVERS=="?*", ATTR{dev_id}=="0x0", ATTR{type}=="1", KERNEL=="{{ hb_kernel_iface }}", NAME="{{ hb_iface_desired_name }}"
+      notify: Reload udev rules
 
     - name: Set default gateway if necessary
       ansible.builtin.lineinfile:

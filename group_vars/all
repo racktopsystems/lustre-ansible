@@ -1,5 +1,6 @@
     default_iface_desired_name: "admin0"
     hb_iface_desired_name: "hb0"
+    hb_iface_prefix: 24 # This mask is never expected to change.
     netconfig_dir: /etc/sysconfig/network-scripts
     net_persistent_rules_file: /etc/udev/rules.d/70-persistent-net.rules
     # Addresses of NTP servers with which target Lustre nodes should synchronize
