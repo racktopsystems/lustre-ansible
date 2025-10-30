@@ -22,3 +22,10 @@
   ansible.builtin.file:
     state: absent
     path: "{{ ipmi_setup_script_path }}"
+
+- name: Reload udev rules
+  ansible.builtin.command:
+    cmd: "{{ item }}"
+  with_items:
+    - udevadm control --reload-rules
+    - udevadm trigger --subsystem-match=net --action=add
