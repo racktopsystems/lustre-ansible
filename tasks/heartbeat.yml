@@ -1,7 +1,10 @@
 ---
-- name: Setup HA heartbeat (hb0) interface
+- name: Setup HA heartbeat ({{ hb_iface_desired_name }}) interface
   vars:
-    hb_kernel_iface: ens259f1 # Kernel-supplied name for the hb interface
+    kernel_iface_name: '{{ vm_os_assigned_hb_iface_name if ansible_virtualization_role == "guest" else phys_os_assigned_hb_iface_name }}'
+    mac_address: '{{hostvars[ansible_default_ipv4.address]["ansible_" + kernel_iface_name].macaddress}}'
+    final_iface_name: "{{ hb_iface_desired_name }}"
+
   block:
     # If the network configuration file for the hb0 interface already exists,
     # we are just going to make sure that it is correct. We do this by reading
@@ -36,7 +39,7 @@
         cf_iface_file: "{{ dict(UUID=uuid) }}"
       when: not hb_conf_file_result.stat.exists
 
-    - name: Create new interface file for the heartbeat network interface
+    - name: Create new interface file for the {{ hb_iface_desired_name }} heartbeat network interface
       ansible.builtin.copy:
         dest: "{{ netconfig_dir }}/ifcfg-{{ hb_iface_desired_name }}"
         content: |
@@ -58,18 +61,13 @@
           IPADDR={{ hb_iface_ipaddr }}
           PREFIX={{ hb_iface_prefix }}
 
-    - name: Create udev rule for the heartbeat network interface renaming
-      ansible.builtin.copy:
-        dest: "{{ net_persistent_rules_file }}"
-        content: |
-          SUBSYSTEM=="net", ACTION=="add", DRIVERS=="?*", ATTR{dev_id}=="0x0", ATTR{type}=="1", KERNEL=="{{ hb_kernel_iface }}", NAME="{{ hb_iface_desired_name }}"
-      notify: Reload udev rules
-
-    - name: Set default gateway if necessary
-      ansible.builtin.lineinfile:
-        path: /etc/sysconfig/network
-        line: "GATEWAY={{ default_gw_ipaddr }}"
+    - name: Create necessary {{ hb_iface_desired_name }} persistent interface naming rules
+      lineinfile:
+        path: "{{ net_persistent_rules_file }}"
         create: yes
-      when: default_gw_ipaddr is defined and default_gw_ipaddr != ""
+        line: |
+          SUBSYSTEM=="net", ACTION=="add", ATTR{address}=="{{ mac_address }}", ATTR{type}=="1", NAME="{{ final_iface_name }}"
+        regexp: 'ATTR{address}=="{{ mac_address }}".*NAME="{{ final_iface_name }}"'
+      notify: Reload udev rules
 
   notify: Restart network

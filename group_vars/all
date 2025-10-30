@@ -1,3 +1,5 @@
+    vm_os_assigned_hb_iface_name: "ens224"
+    phys_os_assigned_hb_iface_name: "ens259f1"
     default_iface_desired_name: "admin0"
     hb_iface_desired_name: "hb0"
     hb_iface_prefix: 24 # This mask is never expected to change.
