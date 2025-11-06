@@ -1,0 +1,19 @@
+#
+# Copyright RackTop Systems, Inc. 2025
+# Notification Categories: Faults=1,System=2,Reports=3,Security=4
+# LastModified: 2025-10-31 00:00:00.0000000 +0000 GMT m=+0.017844214
+#
+
+Version = 2
+MyRackLocalUri = "https://myracktop.com"
+MyRackUri = "https://myracktop.com"
+MyRackInsecureSkipVerify = false
+Domain = ""
+DisableMyrack = true
+HARole = "Node"
+HANodeId = "{{ ansible_product_uuid }}"
+HANodeAddr = "{{ hb_iface_ipaddr }}"
+
+[[HARemoteNodes]]
+  HANodeId = "{{ hostvars[peer_ip_address].ansible_product_uuid }}"
+  HANodeAddr = "{{ hostvars[peer_ip_address].hb_iface_ipaddr }}"

@@ -1,0 +1,48 @@
+{
+  "Version": 2,
+  "Cluster": {
+    "Revision": {{ hiavd_initial_revision_id }},
+    "CommsConfig": {
+      "ConnectionTimeout": 3000000000,
+      "ConnectionKeepAlive": 5000000000,
+      "PingTimeout": 1000000000,
+      "PingRetry": 1,
+      "AcceptableClockSkew": 15000000000,
+      "HeartbeatInterval": 1000000000,
+      "HeartbeatRetry": 5,
+      "SensorTimeout": 6000000000,
+      "SensorPollRate": 300000000000,
+      "LinkFailoverDelay": 0,
+      "FailoverDelay": 2000000000,
+      "PowerOffUnsafeToImport": true,
+      "PowerOffExportTimeout": 30000000000
+    },
+    "AutoFailoverMode": "MoveResourcesAndDisableNode",
+    "AutoRebalanceTimeOfDay": "",
+    "Nodes": {
+      "{{ first_node_uuid }}": {
+        "Guid": "{{ first_node_uuid }}",
+        "DisableReason": "",
+        "DisableTimestamp": "0001-01-01T00:00:00Z",
+        "DisableInitiator": "",
+        "DisabledByAutoFailover": false
+      },
+      "{{ second_node_uuid }}": {
+        "Guid": "{{ second_node_uuid }}",
+        "DisableReason": "",
+        "DisableTimestamp": "0001-01-01T00:00:00Z",
+        "DisableInitiator": "",
+        "DisabledByAutoFailover": false
+      }
+    },
+    "ResourceGroups": {},
+    "Pools": {},
+    "UpgradedVnics": true,
+    "UpgradedFailover": true,
+    "UpgradedRoutes": true,
+    "DisableReason": "",
+    "DisableTimestamp": "0001-01-01T00:00:00Z",
+    "DisableInitiator": "",
+    "DisabledByAutoFailover": false
+  }
+}

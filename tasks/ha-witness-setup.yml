@@ -1,0 +1,70 @@
+---
+# This fact gathering gives us version information for hiavd as well as
+# whether or not it has already been configured, which we depend upon
+# during generation of the config file. We do this because we
+# want to avoid re-creation of the config file and critically the state
+# file due to content mismatch which will necessarily occur as the state
+# file evolves over time.
+- name: Gather hiavd program facts on the witness
+  hiavd_facts:
+
+- name: HA service setup on the witness
+  vars:
+    # Boolean identifying whether the first entry in the cluster_nodes group
+    # should be treated as the first node in the cluster.
+    first_ha_node: "{{ hostvars[groups['cluster_nodes'][0]].first_ha_node }}"
+
+    first_node_ipmi_ip_address: "{{ hostvars[groups['cluster_nodes'][0]].ipmi_ip_address if first_ha_node else hostvars[groups['cluster_nodes'][1]].ipmi_ip_address }}"
+
+    first_node_name: "{{ hostvars[groups['cluster_nodes'][0]].ansible_hostname if first_ha_node else hostvars[groups['cluster_nodes'][1]].ansible_hostname }}"
+
+    first_node_private_ip_address: "{{ hostvars[groups['cluster_nodes'][0]].hb_iface_ipaddr if first_ha_node else hostvars[groups['cluster_nodes'][1]].hb_iface_ipaddr }}"
+
+    first_node_public_ip_address: "{{ hostvars[groups['cluster_nodes'][0]].ansible_default_ipv4.address if first_ha_node else hostvars[groups['cluster_nodes'][1]].ansible_default_ipv4.address }}"
+
+    # UUID of the first node
+    first_node_uuid: "{{ hostvars[groups['cluster_nodes'][0]].ansible_product_uuid if first_ha_node else hostvars[groups['cluster_nodes'][1]].ansible_product_uuid }}"
+
+    second_node_ipmi_ip_address: "{{ hostvars[groups['cluster_nodes'][0]].ipmi_ip_address if not first_ha_node else hostvars[groups['cluster_nodes'][1]].ipmi_ip_address }}"
+
+    second_node_name: "{{ hostvars[groups['cluster_nodes'][0]].ansible_hostname if not first_ha_node else hostvars[groups['cluster_nodes'][1]].ansible_hostname }}"
+
+    second_node_private_ip_address: "{{ hostvars[groups['cluster_nodes'][0]].hb_iface_ipaddr if not first_ha_node else hostvars[groups['cluster_nodes'][1]].hb_iface_ipaddr }}"
+
+    second_node_public_ip_address: "{{ hostvars[groups['cluster_nodes'][0]].ansible_default_ipv4.address if not first_ha_node else hostvars[groups['cluster_nodes'][1]].ansible_default_ipv4.address }}"
+
+    # UUID of the second node
+    second_node_uuid: "{{ hostvars[groups['cluster_nodes'][0]].ansible_product_uuid if not first_ha_node else hostvars[groups['cluster_nodes'][1]].ansible_product_uuid }}"
+
+    witness_name: "{{ ansible_hostname }}"
+    witness_public_ip_address: "{{ ansible_default_ipv4.address }}"
+    # UUID of the witness itself
+    witness_uuid: "{{ ansible_product_uuid }}"
+
+  block:
+    - name: Generate cluster-wide guid
+      xor_uuid:
+        uuid1: "{{ first_node_uuid }}"
+        uuid2: "{{ second_node_uuid }}"
+      register: reg_cluster_guid
+
+    - name: Generate {{ identifiers_file }}
+      ansible.builtin.copy:
+        content: '{"ClusterId": {{ reg_cluster_guid.guid_hash }}, "ClusterGuid": "{{ reg_cluster_guid.guid }}"}'
+        dest: "{{ identifiers_file }}"
+
+    - name: Generate {{ hiavd_config_file }}
+      ansible.builtin.template:
+        dest: "{{ hiavd_config_file }}"
+        src: templates/{{ hiavd_config_file }}.j2
+
+    # After initial generation this state file will be mutated by hiavd.
+    - name: Generate {{ hiavd_state_file }}
+      ansible.builtin.template:
+        dest: "{{ hiavd_state_file }}"
+        src: templates/{{ hiavd_state_file }}.j2
+        when:
+          - ansible_facts.hiavd.new_configuration
+          - hiavd_force_config_recreation
+
+  notify: Restart hiavd service
