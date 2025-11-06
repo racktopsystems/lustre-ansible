@@ -8,35 +8,45 @@
 - name: Gather hiavd program facts
   hiavd_facts:
 
-- name: HA service setup
+- name: Add various HA component facts
   vars:
+    # Boolean identifying whether the first entry in the cluster_nodes group
+    # should be treated as the first node in the cluster.
+    first_ha_node: "{{ hostvars[groups['cluster_nodes'][0]].first_ha_node }}"
     ip_address: "{{inventory_hostname}}"
-    first_ha_node: "{{hostvars[ip_address].first_ha_node}}"
-    peer_ip_address: "{{hostvars[ip_address].ha_peer_ipaddr}}"
-    first_node_uuid: "{{ ansible_product_uuid if first_ha_node
-      else hostvars[peer_ip_address].ansible_product_uuid }}"
-    second_node_uuid: "{{ ansible_product_uuid if not first_ha_node else hostvars[peer_ip_address].ansible_product_uuid }}"
-    first_node_name: "{{ ansible_hostname if first_ha_node else hostvars[peer_ip_address].ansible_hostname }}"
-    second_node_name: "{{ ansible_hostname if not first_ha_node else hostvars[peer_ip_address].ansible_hostname }}"
-    first_node_ipmi_ip_address: "{{ ipmi_ip_address if first_ha_node
-      else hostvars[peer_ip_address]['ipmi_ip_address'] }}"
-    second_node_ipmi_ip_address: "{{ ipmi_ip_address if not first_ha_node
-      else hostvars[peer_ip_address]['ipmi_ip_address'] }}"
-    first_node_public_ip_address:
-      "{{ ansible_default_ipv4.address if first_ha_node
-      else hostvars[peer_ip_address]['ansible_default_ipv4']['address'] }}"
-    second_node_public_ip_address:
-      "{{ ansible_default_ipv4.address if not first_ha_node
-      else hostvars[peer_ip_address]['ansible_default_ipv4']['address'] }}"
-    first_node_private_ip_address: "{{ hb_iface_ipaddr if first_ha_node
-      else hostvars[peer_ip_address]['hb_iface_ipaddr'] }}"
-    second_node_private_ip_address: "{{ hb_iface_ipaddr if not first_ha_node
-      else hostvars[peer_ip_address]['hb_iface_ipaddr'] }}"
+    peer_ip_address: "{{ hostvars[ip_address].ha_peer_ipaddr if is_not_witness else 'bug-bug-bug' }}"
+  set_fact:
+    peer_ip_address: "{{ peer_ip_address }}"
 
-    witness_uuid: "{{ hostvars[groups['cluster_witness'][0]].ansible_product_uuid }}"
+    first_node_ipmi_ip_address: "{{ hostvars[groups['cluster_nodes'][0]].ipmi_ip_address if first_ha_node else hostvars[groups['cluster_nodes'][1]].ipmi_ip_address }}"
+
+    first_node_name: "{{ hostvars[groups['cluster_nodes'][0]].ansible_hostname if hostvars[groups['cluster_nodes'][0]].first_ha_node else hostvars[groups['cluster_nodes'][1]].ansible_hostname }}"
+
+    first_node_private_ip_address: "{{ hostvars[groups['cluster_nodes'][0]].hb_iface_ipaddr if first_ha_node else hostvars[groups['cluster_nodes'][1]].hb_iface_ipaddr }}"
+
+    first_node_public_ip_address: "{{ hostvars[groups['cluster_nodes'][0]].ansible_default_ipv4.address if first_ha_node else hostvars[groups['cluster_nodes'][1]].ansible_default_ipv4.address }}"
+
+    # UUID of the first node
+    first_node_uuid: "{{ hostvars[groups['cluster_nodes'][0]].ansible_product_uuid if first_ha_node else hostvars[groups['cluster_nodes'][1]].ansible_product_uuid }}"
+
+    second_node_ipmi_ip_address: "{{ hostvars[groups['cluster_nodes'][0]].ipmi_ip_address if not first_ha_node else hostvars[groups['cluster_nodes'][1]].ipmi_ip_address }}"
+
+    second_node_name: "{{ hostvars[groups['cluster_nodes'][0]].ansible_hostname if not first_ha_node else hostvars[groups['cluster_nodes'][1]].ansible_hostname }}"
+
+    second_node_private_ip_address: "{{ hostvars[groups['cluster_nodes'][0]].hb_iface_ipaddr if not first_ha_node else hostvars[groups['cluster_nodes'][1]].hb_iface_ipaddr }}"
+
+    second_node_public_ip_address: "{{ hostvars[groups['cluster_nodes'][0]].ansible_default_ipv4.address if not first_ha_node else hostvars[groups['cluster_nodes'][1]].ansible_default_ipv4.address }}"
+
+    # UUID of the second node
+    second_node_uuid: "{{ hostvars[groups['cluster_nodes'][0]].ansible_product_uuid if not first_ha_node else hostvars[groups['cluster_nodes'][1]].ansible_product_uuid }}"
+
     witness_name: "{{ hostvars[groups['cluster_witness'][0]].ansible_hostname }}"
     witness_public_ip_address: "{{ hostvars[groups['cluster_witness'][0]].ansible_default_ipv4.address }}"
 
+    # UUID of the witness itself
+    witness_uuid: "{{ hostvars[groups['cluster_witness'][0]].ansible_product_uuid }}"
+
+- name: HA set on both nodes and witness
   # In this block some tasks have a `when` conditional eventhough these tasks
   # render a template, which seems like an odd thing to do, given the template
   # should be rendered identically each and every time.
@@ -58,6 +68,8 @@
       ansible.builtin.template:
         dest: "{{ bsr_config_file }}"
         src: templates/{{ bsr_config_file }}.j2
+      when:
+        - is_not_witness
 
     - name: Generate {{ identifiers_file }}
       ansible.builtin.copy:
@@ -77,5 +89,3 @@
       when:
         - ansible_facts.hiavd.new_configuration
         - hiavd_force_config_recreation
-
-  notify: Restart hiavd service
