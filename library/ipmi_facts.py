@@ -12,8 +12,20 @@ def extract_ip_address(output):
             return line.split(":")[1][1:]
 
 
+def is_vm(prod_name_filename="/sys/class/dmi/id/product_name") -> bool:
+    with open(prod_name_filename, "rb") as fp:
+        if fp.readline().decode("utf8").lower().startswith("vm"):
+            return True
+    return False
+
+
 def main():
     module = AnsibleModule(argument_spec={}, supports_check_mode=True)
+    if is_vm():
+        facts = {"ipmi_ip_address": "", "ipmi_present": False}
+        module.exit_json(changed=False, ansible_facts=facts)
+
+    # Physical system handled below.
     try:
         if not os.path.exists("/dev/ipmi0"):
             facts = {"ipmi_ip_address": "0.0.0.0", "ipmi_present": False}
