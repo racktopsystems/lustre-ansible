@@ -8,7 +8,7 @@ from ansible.module_utils.basic import AnsibleModule
 
 def extract_ip_address(output):
     for line in output.splitlines():
-        if line.startswith("IP Address ") and not "Source" in line:
+        if line.startswith("IP Address ") and "Source" not in line:
             return line.split(":")[1][1:]
 
 
@@ -21,15 +21,12 @@ def is_vm(prod_name_filename="/sys/class/dmi/id/product_name") -> bool:
 
 def main():
     module = AnsibleModule(argument_spec={}, supports_check_mode=True)
-    if is_vm():
+    if is_vm() or not os.path.exists("/dev/ipmi0"):
         facts = {"ipmi_ip_address": "", "ipmi_present": False}
         module.exit_json(changed=False, ansible_facts=facts)
 
-    # Physical system handled below.
+    # Physical system with a /dev/ipmi0 handled below.
     try:
-        if not os.path.exists("/dev/ipmi0"):
-            facts = {"ipmi_ip_address": "", "ipmi_present": False}
-            module.exit_json(changed=False, ansible_facts=facts)
         # Run the command
         res = subprocess.check_output(
             "/usr/bin/ipmitool lan print 3".split(), universal_newlines=True
