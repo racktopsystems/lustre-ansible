@@ -28,7 +28,7 @@ def main():
     # Physical system handled below.
     try:
         if not os.path.exists("/dev/ipmi0"):
-            facts = {"ipmi_ip_address": "0.0.0.0", "ipmi_present": False}
+            facts = {"ipmi_ip_address": "", "ipmi_present": False}
             module.exit_json(changed=False, ansible_facts=facts)
         # Run the command
         res = subprocess.check_output(
@@ -36,7 +36,7 @@ def main():
         )
         # Parse and return structured data
         ip_address = extract_ip_address(res)
-        facts = {"ipmi_ip_address": ip_address, "ipmi_present": False}
+        facts = {"ipmi_ip_address": ip_address, "ipmi_present": True}
         module.exit_json(changed=False, ansible_facts=facts)
     except subprocess.CalledProcessError as e:
         module.fail_json(msg=f"Command failed: {e}")
