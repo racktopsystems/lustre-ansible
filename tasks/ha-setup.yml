@@ -12,13 +12,16 @@
   vars:
     my_role: "{{ role if role|default(none) else 'oss' if inventory_hostname in groups['oss'] else 'mds' }}"
     group: "{{ 'oss' if my_role == 'oss' else 'mds' }}"
-    # Boolean identifying whether the first entry in the cluster_nodes group
-    # should be treated as the first node in the cluster.
+    # Boolean identifying whether the first entry in the group identified by
+    # the `group` variable should be treated as the first node in the cluster.
     first_ha_node: "{{ hostvars[groups[group][0]].first_ha_node }}"
     ip_address: "{{inventory_hostname}}"
-    peer_ip_address: "{{ hostvars[ip_address].ha_peer_ipaddr if is_not_witness else 'bug-bug-bug' }}"
   set_fact:
-    peer_ip_address: "{{ peer_ip_address }}"
+    # This is a symbolic name which we give to the hosts in the inventory in
+    # place of IP addresses. The benefit is more consistency with names such as
+    # ossnode1, mdsnode1, etc. In addition, without the '-v' flag passed to
+    # ansible-playbook, actual IP addresses of the machines are disguised.
+    peer_inventory_name: "{{ group + 'node2' if inventory_hostname == group + 'node1' else group + 'node1' }}"
 
     first_node_ipmi_ip_address: "{{ hostvars[groups[group][0]].ipmi_ip_address if first_ha_node else hostvars[groups[group][1]].ipmi_ip_address }}"
 
