@@ -36,5 +36,5 @@
     hiavd_config_file: /etc/racktop/hiavd/hiavd.conf
     hiavd_state_file: /etc/racktop/hiavd/serialized.dat
     identifiers_file: /etc/racktop/hiavd/identifiers.dat
-    is_not_witness: "{{ inventory_hostname not in groups['cluster_witness'] }}"
+    is_not_witness: "{{ 'cluster_witness' not in group_names }}"
     is_not_virtual: "{{ ansible_virtualization_role != 'guest' }}"
