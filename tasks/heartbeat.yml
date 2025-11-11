@@ -1,8 +1,14 @@
 ---
 - name: Setup HA heartbeat ({{ hb_iface_desired_name }}) interface
   vars:
+    # Boolean value indicating whether 'ansible_<hb_iface_desired_name>' key is
+    # present in the host's inventory. If present, it means the rule must
+    # already be in place, thus don't try to create it, because it is going to
+    # fail, due to the interface having been renamed already to our desired
+    # heartbeat interface name.
+    hb_iface_in_inventory: "{{ 'ansible_' + hb_iface_desired_name in hostvars[inventory_hostname] }}"
     kernel_iface_name: '{{ vm_os_assigned_hb_iface_name if ansible_virtualization_role == "guest" else phys_os_assigned_hb_iface_name }}'
-    mac_address: '{{hostvars[ansible_default_ipv4.address]["ansible_" + kernel_iface_name].macaddress}}'
+    mac_address: '{{hostvars[inventory_hostname]["ansible_" + kernel_iface_name].macaddress}}'
     final_iface_name: "{{ hb_iface_desired_name }}"
 
   block:
@@ -68,6 +74,12 @@
         line: |
           SUBSYSTEM=="net", ACTION=="add", ATTR{address}=="{{ mac_address }}", ATTR{type}=="1", NAME="{{ final_iface_name }}"
         regexp: 'ATTR{address}=="{{ mac_address }}".*NAME="{{ final_iface_name }}"'
+      # Only perform this task if the kernel-assigned interface name is still
+      # present. Once the interface has been renamed and new name is in the
+      # inventory the task is going to fail because the required lookup is going
+      # to fail.
+      when:
+        - not hb_iface_in_inventory
       notify: Reload udev rules
 
   notify: Restart network
