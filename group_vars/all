@@ -1,40 +1,44 @@
-    vm_os_assigned_hb_iface_name: "ens224"
-    phys_os_assigned_hb_iface_name: "ens259f1"
-    default_iface_desired_name: "admin0"
-    hb_iface_desired_name: "hb0"
-    hb_iface_prefix: 24 # This mask is never expected to change.
-    netconfig_dir: /etc/sysconfig/network-scripts
-    net_persistent_rules_file: /etc/udev/rules.d/70-persistent-net.rules
-    # Addresses of NTP servers with which target Lustre nodes should synchronize
-    # their clocks.
-    ntp_servers:
-      - "0.pool.ntp.org"
-      - "1.pool.ntp.org"
-    # IPMI settings should be consistent across systems. The username normally
-    # root, but could be sometihng else.
-    ipmi_username: "testuser" # Name of the IPMI user to create
-    ipmi_user_id: 4
-    ipmi_password_hash_file: /var/tmp/ipmi-hash
-    ipmi_password_hash_file_mode: "0400"
-    ipmi_setup_script_path: /run/ipmi_user_setup.sh
-    update_necessary: true
-    hide_sensitive_output: false
-    # Location of the offline registration file on the remote systems.
-    offline_reg_filename: /tmp/oreg
-    # Name of the temporary user to create for the purposes of registration.
-    # This user should be removed once it is no-longer required.
-    offline_reg_user: ansiblereg
-    # Name of the entity accepting the EULA. Should be personalized if the
-    # default value is not acceptable.
-    offline_reg_eula_name: "System Administrator"
-    bsr_config_file: /etc/bsr.conf
-    # This tunable enables us to unconditionally regenerate HA configuration
-    # files on the cluster nodes and the witness. Normally we don't regenerate
-    # them after their initial creation.
-    hiavd_force_config_recreation: false
-    hiavd_initial_revision_id: 1
-    hiavd_config_file: /etc/racktop/hiavd/hiavd.conf
-    hiavd_state_file: /etc/racktop/hiavd/serialized.dat
-    identifiers_file: /etc/racktop/hiavd/identifiers.dat
-    is_not_witness: "{{ 'cluster_witness' not in group_names }}"
-    is_not_virtual: "{{ ansible_virtualization_role != 'guest' }}"
+# Variables Ansible is aware of.
+any_errors_fatal: "{{ fastfail | default(false) }}"
+
+# All other common variables.
+vm_os_assigned_hb_iface_name: "ens224"
+phys_os_assigned_hb_iface_name: "ens259f1"
+default_iface_desired_name: "admin0"
+hb_iface_desired_name: "hb0"
+hb_iface_prefix: 24 # This mask is never expected to change.
+netconfig_dir: /etc/sysconfig/network-scripts
+net_persistent_rules_file: /etc/udev/rules.d/70-persistent-net.rules
+# Addresses of NTP servers with which target Lustre nodes should synchronize
+# their clocks.
+ntp_servers:
+  - "0.pool.ntp.org"
+  - "1.pool.ntp.org"
+# IPMI settings should be consistent across systems. The username normally
+# root, but could be sometihng else.
+ipmi_username: "testuser" # Name of the IPMI user to create
+ipmi_user_id: 4
+ipmi_password_hash_file: /var/tmp/ipmi-hash
+ipmi_password_hash_file_mode: "0400"
+ipmi_setup_script_path: /run/ipmi_user_setup.sh
+update_necessary: true
+hide_sensitive_output: false
+# Location of the offline registration file on the remote systems.
+offline_reg_filename: /tmp/oreg
+# Name of the temporary user to create for the purposes of registration.
+# This user should be removed once it is no-longer required.
+offline_reg_user: ansiblereg
+# Name of the entity accepting the EULA. Should be personalized if the
+# default value is not acceptable.
+offline_reg_eula_name: "System Administrator"
+bsr_config_file: /etc/bsr.conf
+# This tunable enables us to unconditionally regenerate HA configuration
+# files on the cluster nodes and the witness. Normally we don't regenerate
+# them after their initial creation.
+hiavd_force_config_recreation: false
+hiavd_initial_revision_id: 1
+hiavd_config_file: /etc/racktop/hiavd/hiavd.conf
+hiavd_state_file: /etc/racktop/hiavd/serialized.dat
+identifiers_file: /etc/racktop/hiavd/identifiers.dat
+is_not_witness: "{{ 'cluster_witness' not in group_names }}"
+is_not_virtual: "{{ ansible_virtualization_role != 'guest' }}"
