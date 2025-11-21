@@ -12,7 +12,7 @@ dslist=(
 {% for dataset in mdt_mountpoints[mds_dataset_on_pool] %}
   {{ mds_dataset_on_pool }}/{{ dataset }}
 {% endfor %}
-  {{ mgs_dataset_on_pool }}/lustre-mgt
+  {{ mgt_dataset_on_pool }}/lustre-mgt
 )
 
 # echo `date --rfc-3339=seconds` : pre $1 >> /etc/racktop/hiavd/sh.log

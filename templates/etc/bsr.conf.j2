@@ -15,5 +15,5 @@ HANodeId = "{{ ansible_product_uuid }}"
 HANodeAddr = "{{ hb_iface_ipaddr }}"
 
 [[HARemoteNodes]]
-  HANodeId = "{{ hostvars[peer_ip_address].ansible_product_uuid }}"
-  HANodeAddr = "{{ hostvars[peer_ip_address].hb_iface_ipaddr }}"
+  HANodeId = "{{ hostvars[peer_inventory_name].ansible_product_uuid }}"
+  HANodeAddr = "{{ hostvars[peer_inventory_name].hb_iface_ipaddr }}"
