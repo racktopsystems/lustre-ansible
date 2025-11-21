@@ -1,0 +1,30 @@
+---
+- name: Ensure pools are imported and ready
+  import_zfs_pool:
+    poolname: "{{ item }}"
+  with_items: "{{ zpools }}"
+
+- name: ZFS pools fact gathering
+  zfs_pool_facts:
+
+- name: Debug pools
+  debug:
+    msg: "{{ ansible_facts.zfs.pools }}"
+
+- name: Mock create datasets
+  make_lustre_zfs:
+    poolname: "{{ item }}"
+    # Only datasets that belong to the pool present on the given node will be
+    # created. We are ensuring that no matter how the pools are currently
+    # placed, whether split between nodes or multiple on a single node, creation
+    # of the ZFS datasets will take place on the node where the given pool is
+    # currently imported. The `ansible_facts.zfs.pools` iterable is a list of
+    # pools discovered on this system.
+    details: "{{ ost_datasets[item] }}"
+    dryrun: true # For now, don't actually create these datasets
+  with_items:
+    - "{{ ansible_facts.zfs.pools }}"
+  # when: ("zfs" in ansible_facts and ansible_facts.zfs.pools)
+  when:
+    - ("zfs" in ansible_facts)
+    - ansible_facts.zfs.pools
