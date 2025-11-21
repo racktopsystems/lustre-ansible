@@ -255,7 +255,7 @@ def run_module():
         module.exit_json(**result)
 
     backoff = 1
-    for _ in range(60):
+    for _ in range(16):
         ok_on_local, _ = ensure_pool_is_visible(poolname)
         if not ok_on_local:
             _ = issue_refresh()
@@ -265,7 +265,7 @@ def run_module():
             break
 
     backoff = 1
-    for _ in range(60):
+    for _ in range(16):
         ok_on_peer, _ = ensure_pool_is_visible(poolname, ha_peer_ipaddr, locally=False)
         if not ok_on_peer:
             _ = issue_refresh(addr=ha_peer_ipaddr, locally=False)
@@ -278,7 +278,7 @@ def run_module():
     rgname = "RG" + poolname[1:]  # Drop leading 'p' from the pool name
 
     delay = 1
-    for _ in range(30):
+    for _ in range(16):
         if node:
             ok, err = create_resource_group(rgname, hostname=node)
         else:
@@ -318,7 +318,7 @@ def run_module():
             module.fail_json(msg=str(err), changed=False)
 
     delay = 1
-    for _ in range(30):
+    for _ in range(16):
         ok, err = add_pool_to_resource_group(rgname, poolname)
 
         # Pool was added to the resource group successfully.
