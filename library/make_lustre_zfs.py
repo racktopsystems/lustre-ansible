@@ -59,7 +59,7 @@ class LustreFilesystem:
     @property
     def fmt_mkfsoptions(self) -> str:
         opts = " -o ".join([f"{k}={v}" for k, v in self._mkfsopts.items()])
-        return f'"{opts}"'
+        return f"{opts}"
 
     def fmt_servicenode(self):
         for n in self._servicenode:
