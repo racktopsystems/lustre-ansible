@@ -1,0 +1,40 @@
+- name: Setup SSH keys for communication between peers
+  vars:
+    ha_peer_ssh_privkey_file: "{{ playbook_dir }}/tmpssh/id_ed25519"
+    ha_peer_ssh_pubkey_file: "{{ playbook_dir }}/tmpssh/id_ed25519.pub"
+    root_ssh_dir: /root/.ssh
+
+  block:
+    - name: Ensure root .ssh directory exists
+      ansible.builtin.file:
+        path: "{{ root_ssh_dir }}"
+        state: directory
+        mode: 0700
+
+    - name: Copy temporary SSH private key to remote server
+      copy:
+        src: "{{ item.src }}"
+        dest: "{{ item.dst }}"
+        owner: root
+        mode: 0400
+      with_items:
+        - {
+            "src": "{{ ha_peer_ssh_privkey_file }}",
+            "dst": "{{ root_ssh_dir }}/id_ed25519",
+          }
+        - {
+            "src": "{{ ha_peer_ssh_pubkey_file }}",
+            "dst": "{{ root_ssh_dir }}/id_ed25519.pub",
+          }
+
+    - name: Add same key to authorized_keys file to enable peer trust
+      ansible.posix.authorized_key:
+        user: root
+        state: present
+        key: "{{ lookup('file', ha_peer_ssh_pubkey_file) }}"
+      notify: Remove temporary SSH key
+
+    # This is really just for testing
+    # - name: Connect to peer and verify hostname
+    #   ansible.builtin.command: |
+    #     ssh -o "StrictHostKeyChecking=no" -i {{ root_ssh_dir }}/id_ed25519 root@{{ ha_peer_ipaddr }} echo "XXX"
