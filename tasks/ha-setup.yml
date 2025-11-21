@@ -94,3 +94,12 @@
       when:
         - ansible_facts.hiavd.new_configuration
         - hiavd_force_config_recreation
+
+    - name: Create resource group for pool
+      create_resource_group:
+        poolname: "{{ item }}"
+        ha_peer_ipaddr: "{{ ha_peer_ipaddr }}"
+      with_items:
+        - "{{ zpools }}"
+      when:
+        - is_not_witness
