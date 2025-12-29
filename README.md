@@ -100,6 +100,8 @@ In addition to the inventory file which contains _all_ remote systems that Ansib
 #### Offline Registration
 Among other things, one of the steps is registration of the systems. In order for registration to happen, because these systems have no access to the Internet, offline registration files must be provided. RackTop is expected to supply offline registration files for each system. All registration files must be renamed such that the filename matches the hostname specified in the inventory file plus the `.oreg` extension. These files must reside in the `inputs/registration` directory. Thus, if a hostname assigned to a system is `system01`, the filename will be `system01.oreg` and the path relative to the root of this repository is `inputs/registration/system01.oreg`.
 
+Because there's not a straight-forward command-line oriented method for obtaining the registration code on 23.6, which RackTop needs in order to properly register the system and generate an offline registration file, a convenience script has been created. To obtain the registration code use the `get-reg-code.sh` script in the `scripts/` directory in this repository. The script must be copied to each machine which requires registration. Ensure the script is executable and export the `USERNAME` and `PASSWORD` environment variables which this script requires in order to obtain the registration information. Normally, this will either be the `bsradmin` or the `root` user.
+
 As previously mentioned, the `global-playbook.yml` is the primary playbook which aggregates tasks and handlers from several files. This is the playbook which must be executed.
 The following command assumes that the user executing tasks on the remote systems is called `bsradmin`, the password lives in the `bsradminpass` and inventory is in the `inventory.yml` file.
 ```bash
@@ -110,3 +112,31 @@ $ ansible-playbook -u bsradmin --become-password-file bsradminpass -v -i invento
 The repository is organized in a modular fashion to ease development. We should aim for tasks files which are relatively standalone and complete a single objective. It may make sense to have files which combine objectives when those objectives are related and the file isn't so long that developing and debugging it is becoming a burden. It may make sense to have variables in the global playbook, but you are more likely to benefit from variables defined in individual task blocks. There are examples of this in the repo. It makes sense to do this when the variable is only used in one place, or perhaps in a handful of tasks, in which case it has to be defined in each task, since the scope of the variable does not extend beyond the scope of the given task.
 
 Because we may not always want to run _all_ the tasks imported by the global playbook we can create a minimized version of the global playbook by copying the global playbook and commenting out all but the included files that we need to run. This will speed-up development and debugging efforts.
+
+
+
+
+Notes:
+MDS / MGS pool configuration
+
+Pool names for metadata/management servers:
+p_mdt01
+
+Clarify with Max whether we should have two pools, both with `mdt` in their names, where one of those two pools will contain the management dataset as well as the metadata dataset and the second pool will contain _only_ the metadata dataset.
+
+Clarify also whether there will be more than one Lustre dataset per pool.
+p_mdt02
+
+p_mgt01
+
+Dataset names for metadata/management servers:
+p_mdt01/lustre-mdt
+p_mgt01/lustre-mgt01
+
+Pool names for object storage servers:
+p_ost01
+p_ost02
+
+Dataset names for object storage servers:
+p_ost01/lustre-ost01
+p_ost02/lustre-ost01
