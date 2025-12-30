@@ -15,7 +15,7 @@
 
 - name: Restart NTP
   ansible.builtin.service:
-    name: ntpd
+    name: chronyd
     state: restarted
 
 - name: Remove IPMI user setup script
@@ -29,3 +29,12 @@
   with_items:
     - udevadm control --reload-rules
     - udevadm trigger --subsystem-match=net --action=add
+
+- name: Remove temporary SSH key
+  ansible.builtin.file:
+    path: "{{ item }}"
+    # state: absent
+    state: touch
+  with_items:
+    - "{{ playbook_dir }}/tmpssh/id_ed25519"
+    - "{{ playbook_dir }}/tmpssh/id_ed25519.pub"
