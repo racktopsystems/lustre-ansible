@@ -1,8 +1,6 @@
 ---
 - name: Gather custom registration facts for non-witness members
   registration_facts:
-  when: ( inventory_hostname not in groups['witness'] )
-  # failed_when: false
 
 - name: Set fact with {{ offline_reg_user }} password information
   vars:
