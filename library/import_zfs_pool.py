@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
 
 import subprocess
-
 from pathlib import Path
 from typing import Tuple
+
 from ansible.module_utils.basic import AnsibleModule
 
 
@@ -80,8 +80,8 @@ def run_module():
                 "msg": "pool import unsuccessful",
                 "cmd": err.cmd,
                 "returncode": err.returncode,
-                "stdout": err.stdout,
-                "stderr": err.stderr,
+                "stdout": str(err.stdout).strip(),
+                "stderr": str(err.stderr).strip(),
                 "changed": False,
             }
         )
