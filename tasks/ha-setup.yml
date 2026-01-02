@@ -8,7 +8,41 @@
 - name: Gather hiavd program facts
   hiavd_facts:
 
-- name: Add various HA component facts
+- name: Add various HA component facts (witness)
+  vars:
+    node1: "{{ hostvars.ossnode1 if role == 'oss' else hostvars.mdsnode1 }}"
+    node2: "{{ hostvars.ossnode2 if role == 'oss' else hostvars.mdsnode2 }}"
+  set_fact:
+    first_node_name: "{{ node1.ansible_hostname }}"
+
+    first_node_ipmi_ip_address: "{{ node1.ipmi_ip_address }}"
+
+    first_node_uuid: "{{ node1.ansible_product_uuid }}"
+
+    first_node_private_ip_address: "{{ node1.hb_iface_ipaddr }}"
+
+    first_node_public_ip_address: "{{ node1.ansible_default_ipv4.address }}"
+
+    second_node_name: "{{ node2.ansible_hostname }}"
+
+    second_node_ipmi_ip_address: "{{ node2.ipmi_ip_address }}"
+
+    second_node_uuid: "{{ node2.ansible_product_uuid }}"
+
+    second_node_private_ip_address: "{{ node2.hb_iface_ipaddr }}"
+
+    second_node_public_ip_address: "{{ node2.ansible_default_ipv4.address }}"
+
+    witness_name: "{{ ansible_hostname }}"
+
+    witness_public_ip_address: "{{ ansible_default_ipv4.address }}"
+
+    # UUID of the witness itself
+    witness_uuid: "{{ ansible_product_uuid }}"
+  when:
+    - is_witness
+
+- name: Add various HA component facts (HA peers)
   vars:
     my_role: "{{ role if role|default(none) else 'oss' if inventory_hostname in groups['oss'] else 'mds' }}"
     group: "{{ 'oss' if my_role == 'oss' else 'mds' }}"
@@ -21,6 +55,9 @@
     # place of IP addresses. The benefit is more consistency with names such as
     # ossnode1, mdsnode1, etc. In addition, without the '-v' flag passed to
     # ansible-playbook, actual IP addresses of the machines are disguised.
+
+    # This variable is not required on the witness because it is used in
+    # generation of `/etc/bsr.conf` which does not exist on the witness.
     peer_inventory_name: "{{ group + 'node2' if inventory_hostname == group + 'node1' else group + 'node1' }}"
 
     first_node_ipmi_ip_address: "{{ hostvars[groups[group][0]].ipmi_ip_address if first_ha_node else hostvars[groups[group][1]].ipmi_ip_address }}"
@@ -50,6 +87,7 @@
 
     # UUID of the witness itself
     witness_uuid: "{{ hostvars[groups['cluster_witness'][0]].ansible_product_uuid }}"
+  when: is_not_witness
 
 - name: HA set on both nodes and witness
   # In this block some tasks have a `when` conditional eventhough these tasks
@@ -81,10 +119,48 @@
         content: '{"ClusterId": {{ reg_cluster_guid.guid_hash }}, "ClusterGuid": "{{ reg_cluster_guid.guid }}"}'
         dest: "{{ identifiers_file }}"
 
+    # We create service files for confd and hiavd. These are instance-specific
+    # files. With the ha-witness RPM package we do get a service file for both,
+    # but because we need this configuration to be multi-tenant we are going to
+    # ignore and in fact disable the services which come with bundled with the
+    # RPM and create our own with instance awareness.
+    - name: Create instance-specific systemd service files
+      vars:
+        systemd_system_dir: /usr/lib/systemd/system
+        description: "{{ item.desc }}"
+        service: "{{ item.name }}"
+      ansible.builtin.template:
+        src: "{{ item.src }}"
+        dest: "{{ item.dest }}"
+      with_items:
+        - {
+            "name": "confd",
+            "src": "templates/{{ systemd_system_dir[1:] }}/confd_hiavd.service.j2",
+            "dest": "/tmp/confd-{{ instance }}.service",
+            "desc": "RackTop Configuration Database",
+          }
+        - {
+            "name": "hiavd",
+            "src": "templates/{{ systemd_system_dir[1:] }}/confd_hiavd.service.j2",
+            "dest": "/tmp/hiavd-{{ instance }}.service",
+            "desc": "BrickStor High Availability Service",
+          }
+      when:
+        - is_witness
+
+    - name: Ensure instance-specific config directory {{ hiavd_config_file | dirname }} exists
+      vars:
+        config_dir: "{{ hiavd_config_file | dirname }}"
+      ansible.builtin.file:
+        dest: "{{ config_dir }}"
+        state: directory
+        mode: 0755
+      when: is_witness
+
     - name: Generate {{ hiavd_config_file }}
       ansible.builtin.template:
         dest: "{{ hiavd_config_file }}"
-        src: templates/{{ hiavd_config_file }}.j2
+        src: templates/{{ hiavd_config_file_default }}.j2
 
     # After initial generation this state file will be mutated by hiavd.
     - name: Generate {{ hiavd_state_file }}
