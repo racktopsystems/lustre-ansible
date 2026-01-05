@@ -51,9 +51,32 @@
     executable: /usr/bin/bash # Required due to the 'noexec' setting on /home
     cmd: scripts/register.sh
   when: not system_is_registered
+  register: offline_reg_result
 
 - name: Remove temporary user with which offline registration was performed
   ansible.builtin.user:
     name: "{{ offline_reg_user }}"
     state: absent
   when: not system_is_registered
+
+- name: Restart platform services
+  vars:
+    services_restart_required: offline_reg_result.changed | default(false)
+  ansible.builtin.systemd_service:
+    name: "{{ item }}"
+    state: restarted
+  with_items:
+    - bsrapid
+    - bsrbootstrapd
+    - bsrlicensed
+    - bsrzfsd
+    - confd
+    - healthd
+    - hiavd
+    - hwd
+    # - keymgrd
+    - secured
+    # - webhookd
+    - zcached
+  when:
+    - services_restart_required
