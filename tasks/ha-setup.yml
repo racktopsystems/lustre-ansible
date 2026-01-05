@@ -1,12 +1,8 @@
 ---
-# This fact gathering gives us version information for hiavd as well as
-# whether or not it has already been configured, which we depend upon
-# during generation of the config file. We do this because we
-# want to avoid re-creation of the config file and critically the state
-# file due to content mismatch which will necessarily occur as the state
-# file evolves over time.
-- name: Gather hiavd program facts
-  hiavd_facts:
+# Ensure that this task gathering happens early in the playbook execution. This
+# information is used by the ZFS tasks, etc.
+# - name: Gather hiavd program facts
+#   hiavd_facts:
 
 - name: Add various HA component facts (witness)
   vars:

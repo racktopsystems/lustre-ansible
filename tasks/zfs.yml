@@ -1,8 +1,14 @@
 ---
+# Import pools only if they are not already present in HA resource groups.
+# If pools are configured already, while they maybe aren't imported we do not
+# want to go behind hiavd and attempt to import the pools without hiavd's
+# awareness.
 - name: Ensure pools are imported and ready
   import_zfs_pool:
     poolname: "{{ item }}"
   with_items: "{{ zpools }}"
+  when:
+    - item not in hiavd.pools
 
 - name: ZFS pools fact gathering
   zfs_pool_facts:
@@ -20,7 +26,7 @@
     # of the ZFS datasets will take place on the node where the given pool is
     # currently imported. The `ansible_facts.zfs.pools` iterable is a list of
     # pools discovered on this system.
-    details: "{{ ost_datasets[item] }}"
+    details: "{{ datasets[item] | default('this-is-not-a-pool') }}"
     dryrun: true # For now, don't actually create these datasets
   with_items:
     - "{{ ansible_facts.zfs.pools }}"
