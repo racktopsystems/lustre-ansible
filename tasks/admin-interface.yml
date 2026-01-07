@@ -13,13 +13,19 @@
         create: yes
         line: 'SUBSYSTEM=="net", ACTION=="add", ATTR{address}=="{{ mac_address }}", ATTR{type}=="1", NAME="{{ final_iface_name }}"'
         regexp: 'ATTR{address}=="{{ mac_address }}".*NAME="{{ final_iface_name }}"'
+      when:
+        - is_not_witness
+        - iface_name != default_iface_desired_name
       notify: Reload udev rules
 
     - name: Update interface configuration file
       update_interface:
         old_device: "{{ iface_name }}"
         new_device: "{{ default_iface_desired_name }}"
-      when: iface_name != default_iface_desired_name
+      when:
+        - is_not_witness
+        - iface_name != default_iface_desired_name
+      register: netif_config_update_result
 
     - name: Set default gateway if necessary
       ansible.builtin.lineinfile:
@@ -27,5 +33,17 @@
         line: "GATEWAY={{ default_gw_ipaddr }}"
         create: yes
       when: default_gw_ipaddr is defined and default_gw_ipaddr != ""
+
+    - name: Reboot the system if network interface rename occurs
+      vars:
+        reboot_is_required: |
+          {{ netif_config_update_result.changed | default(false) }}
+      reboot:
+        reboot_timeout: 300
+        test_command: |
+          curl -k https://localhost:8443/static/assets/site.webmanifest
+      when:
+        - is_not_witness
+        - reboot_is_required
 
   notify: Restart network
