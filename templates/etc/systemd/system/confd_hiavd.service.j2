@@ -1,0 +1,17 @@
+[Unit]
+Description={{ description }}
+Wants=multi-user.target
+After=racktop-tz.service
+
+[Service]
+ExecStart=/usr/racktop/lib/{{ service }} \
+    -c /etc/racktop/{{ service }}/{{ instance }}/{{ service }}.conf \
+    -instance {{ instance }} \
+    -logdir /var/log/{{ service }}/{{ instance }} \
+    -pid /var/run/racktop/{{ service }}-{{ instance }}.pid
+Restart=always
+StandardOutput=null
+StandardError=null
+
+[Install]
+WantedBy=multi-user.target
