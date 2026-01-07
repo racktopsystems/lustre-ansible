@@ -110,39 +110,10 @@
       when:
         - is_not_witness
 
-    - name: Generate {{ identifiers_file }}
+    - name: Generate {{ hiavd_identifiers_file }}
       ansible.builtin.copy:
         content: '{"ClusterId": {{ reg_cluster_guid.guid_hash }}, "ClusterGuid": "{{ reg_cluster_guid.guid }}"}'
-        dest: "{{ identifiers_file }}"
-
-    # We create service files for confd and hiavd. These are instance-specific
-    # files. With the ha-witness RPM package we do get a service file for both,
-    # but because we need this configuration to be multi-tenant we are going to
-    # ignore and in fact disable the services which come with bundled with the
-    # RPM and create our own with instance awareness.
-    - name: Create instance-specific systemd service files
-      vars:
-        systemd_system_dir: /usr/lib/systemd/system
-        description: "{{ item.desc }}"
-        service: "{{ item.name }}"
-      ansible.builtin.template:
-        src: "{{ item.src }}"
-        dest: "{{ item.dest }}"
-      with_items:
-        - {
-            "name": "confd",
-            "src": "templates/{{ systemd_system_dir[1:] }}/confd_hiavd.service.j2",
-            "dest": "/tmp/confd-{{ instance }}.service",
-            "desc": "RackTop Configuration Database",
-          }
-        - {
-            "name": "hiavd",
-            "src": "templates/{{ systemd_system_dir[1:] }}/confd_hiavd.service.j2",
-            "dest": "/tmp/hiavd-{{ instance }}.service",
-            "desc": "BrickStor High Availability Service",
-          }
-      when:
-        - is_witness
+        dest: "{{ hiavd_identifiers_file }}"
 
     - name: Ensure instance-specific config directory {{ hiavd_config_file | dirname }} exists
       vars:
@@ -153,16 +124,16 @@
         mode: 0755
       when: is_witness
 
-    - name: Generate {{ hiavd_config_file }}
+    - name: Generate hiavd configuration file
       ansible.builtin.template:
         dest: "{{ hiavd_config_file }}"
         src: templates/{{ hiavd_config_file_default }}.j2
 
     # After initial generation this state file will be mutated by hiavd.
-    - name: Generate {{ hiavd_state_file }}
+    - name: Generate hiavd state file only if new configuration
       ansible.builtin.template:
         dest: "{{ hiavd_state_file }}"
-        src: templates/{{ hiavd_state_file }}.j2
+        src: templates/{{ hiavd_state_file_default }}.j2
       when:
         - ansible_facts.hiavd.new_configuration
         - hiavd_force_config_recreation
