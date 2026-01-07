@@ -146,3 +146,5 @@
         - "{{ zpools }}"
       when:
         - is_not_witness
+
+  notify: Restart hiavd service
