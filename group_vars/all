@@ -37,14 +37,27 @@ bsr_config_file: /etc/bsr.conf
 # them after their initial creation.
 hiavd_force_config_recreation: false
 hiavd_initial_revision_id: 1
-hiavd_config_file_witness: "/etc/racktop/hiavd/{{ instance }}/hiavd.conf"
-hiavd_config_file_default: /etc/racktop/hiavd/hiavd.conf
+
+hiavd_conf_dir: /etc/racktop/hiavd
+
+# hiavd configuration file
+hiavd_config_file_witness: "{{ hiavd_conf_dir }}/{{ instance }}/hiavd.conf"
+hiavd_config_file_default: "{{ hiavd_conf_dir }}/hiavd.conf"
 # For a witness, due to the multi-tenancy requirements the path will be
 # different from the path on the hiavd nodes, which are only ever part of one
 # cluster.
 hiavd_config_file: "{{ hiavd_config_file_witness if is_witness else hiavd_config_file_default }}"
-hiavd_state_file: /etc/racktop/hiavd/serialized.dat
-identifiers_file: /etc/racktop/hiavd/identifiers.dat
+
+# hiavd serialized state file
+hiavd_state_file_witness: "{{ hiavd_conf_dir }}/{{ instance }}/serialized.dat"
+hiavd_state_file_default: "{{ hiavd_conf_dir }}/serialized.dat"
+hiavd_state_file: "{{ hiavd_state_file_witness if is_witness else hiavd_state_file_default }}"
+
+# hiavd identifiers file
+hiavd_identifiers_file_witness: "{{ hiavd_conf_dir }}/{{ instance }}/identifiers.dat"
+hiavd_identifiers_file_default: "{{ hiavd_conf_dir }}/identifiers.dat"
+hiavd_identifiers_file: "{{ hiavd_identifiers_file_witness if is_witness else hiavd_identifiers_file_default }}"
+
 is_not_witness: "{{ 'cluster_witness' not in group_names }}"
 is_witness: "{{ 'cluster_witness' in group_names }}"
 is_not_virtual: "{{ ansible_virtualization_role != 'guest' }}"
