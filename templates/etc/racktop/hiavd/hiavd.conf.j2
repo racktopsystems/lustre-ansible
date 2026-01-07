@@ -3,7 +3,7 @@
 # Version: {{ ansible_facts.hiavd.version }}
 
 DebugSync = false
-CommsPort = 4746
+CommsPort = {{ ha_comms_port }}
 ListenAddr = ""
 VnicIf = ""
 PreExportHook = "/etc/racktop/hiavd/pre-export.sh"
