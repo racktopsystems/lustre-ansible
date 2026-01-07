@@ -61,7 +61,8 @@
 
 - name: Restart platform services
   vars:
-    services_restart_required: offline_reg_result.changed | default(false)
+    services_restart_required: |
+      {{ offline_reg_result.changed | default(false) }}
   ansible.builtin.systemd_service:
     name: "{{ item }}"
     state: restarted
