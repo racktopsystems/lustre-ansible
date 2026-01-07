@@ -1,0 +1,125 @@
+---
+# Only run the following set of tasks on the controller node
+- name: Controller host SSH key preparation
+  hosts: localhost
+  connection: local
+  become: no
+  gather_facts: no
+
+  tasks:
+    - name: Create temporary set of SSH keys for communication between peers
+      vars:
+        control_host_ssh_keys_dir: "{{ playbook_dir }}/tmpssh"
+
+      block:
+        - name: Ensure temporary SSH keys directory exists
+          ansible.builtin.file:
+            path: "{{ control_host_ssh_keys_dir }}"
+            state: directory
+            mode: 0700
+
+        - name: Create a ssh key file in a temporary directory
+          ansible.builtin.command: |
+            ssh-keygen -t ed25519 -f {{ control_host_ssh_keys_dir }}/id_ed25519 -N "" -C "temporary key created via Ansible"
+          args:
+            creates: "{{ control_host_ssh_keys_dir }}/id_ed25519"
+
+- name: Aggregates all specific playbooks (meta playbook)
+  hosts: lustre_nodes
+  become: yes
+  gather_facts: yes
+
+  vars:
+
+  tasks:
+    - name: Set up authorized keys
+      ansible.posix.authorized_key:
+        user: bsradmin
+        state: present
+        key: "{{ item }}"
+      with_file:
+        - .ssh/lustre.pub
+
+    # Collect information about the IPMI if supported.
+    - name: Gather custom IPMI facts
+      ipmi_facts:
+      when:
+        - is_not_witness
+
+    # This fact gathering gives us version information for hiavd as well as
+    # whether or not it has already been configured, which we depend upon
+    # during generation of the config file. We do this because we
+    # want to avoid re-creation of the config file and critically the state
+    # file due to content mismatch which will necessarily occur as the state
+    # file evolves over time.
+    - name: Gather hiavd program and current state facts
+      hiavd_facts:
+        statefile_path: "{{ hiavd_state_file }}"
+    # Configure the hostname from inventory.
+    - import_tasks: tasks/hostname-setup.yml
+      when:
+        - is_not_witness
+
+    # This exchange allows for peers to pass information between each other.
+    - import_tasks: tasks/ha-peer-kex.yml
+      when:
+        - is_not_witness
+
+    # This fact gathering gives us version information for hiavd, which we
+    # depend upon during generation of the config file. We do this because we
+    # want to avoid re-creation of the config file due to content mismatch.
+    - name: Gather hiavd program facts
+      hiavd_facts:
+        config_path: "{{ hiavd_config_file }}"
+
+    # Setup IPMI if a system has support for it.
+    - import_tasks: tasks/ipmi.yml
+      when: is_not_witness
+    # Tasks for SELinux disablement
+    # - import_tasks: tasks/selinux.yml
+    # Tasks for system registration.
+    - import_tasks: tasks/registration.yml
+      when:
+        - perform_registration | default(false)
+        - is_not_witness
+
+    # Tasks for multi-cluster witness confd and hiavd services
+    - import_tasks: tasks/multicluster-witness.yml
+      when:
+        - is_witness
+
+    # Tasks for NTP configuration
+    - import_tasks: tasks/ntp-setup.yml
+
+    # Tasks for administrative and HB network configuration
+    # admin network configuration
+    - import_tasks: tasks/admin-interface.yml
+    #
+    # hiavd heartbeat interface configuration
+    - import_tasks: tasks/heartbeat.yml
+      when:
+        - is_not_witness
+
+    # ZFS filesystem configuration
+    - import_tasks: tasks/zfs.yml
+      when:
+        - is_not_witness
+
+    # Tasks for configuring HA
+    # hiavd configuration
+    - import_tasks: tasks/ha-setup.yml
+
+    - import_tasks: tasks/ha-hooks-setup.yml
+    #
+    # Tasks for configuring Infiniband interfaces
+    # - import_tasks: tasks/ib-setup.yml
+    #
+    # Tasks for configuring Lnet
+    # - import_tasks: tasks/lnet-setup.yml
+    # Tasks for installing Lustre software
+    #
+    # Tasks for configuring Luste filesystems and services
+    # - import_tasks: tasks/lustre-storage.yml
+
+  handlers:
+    - import_tasks: handlers/handlers.yml
