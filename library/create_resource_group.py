@@ -3,8 +3,8 @@
 import json
 import subprocess
 import time
-
 from typing import Any, Dict, List, Tuple
+
 from ansible.module_utils.basic import AnsibleModule
 
 HIAVADM_CMD = "/usr/racktop/sbin/hiavadm"
@@ -155,18 +155,18 @@ class PoolNotRepairableException(Exception):
 def check_and_repair_if_possible(poolname: str) -> Tuple[bool, Exception]:
     pool_info = dict()
     # FIXME: Add proper error handling
-    cluster_state, err = get_current_cluster_state()
+    state, err = get_current_cluster_state()
     if err:
         return False, err
     # Due to the dynamic nature of the environment the structure of the data
     # may be changing at the same time as we query it. Thus, it is possible
     # that cluster state will not contain some or all of the pools.
-    for rg in cluster_state["ResourceGroups"]:
+    for rg in state["ResourceGroups"]:
         pools = rg.get("Pools")
         if not pools:
             continue
         for pool in pools:
-            if pool["Name"] == poolname:
+            if pool.get("Name") == poolname:
                 pool_info = pool
                 break
     if not pool_info:
@@ -199,14 +199,20 @@ def check_pool_already_in_resource_group(
     poolname: str, statefile: str = "/etc/racktop/hiavd/serialized.dat"
 ) -> bool:
     """Checks whether the given pool is already tied to a resoure group."""
-    current_state = dict()
+    state = dict()
     # We are not doing any exception handling here. If this fails there are
     # some real problems with the system and the failure of the task is a
     # relatively minor event in comparison.
     with open(statefile, "rb") as fp:
-        current_state = json.loads(fp.read(-1))
-    pools = current_state["Cluster"]["Pools"]
-    group_ids = current_state["Cluster"]["ResourceGroups"].keys()
+        state = json.loads(fp.read(-1))
+    cluster = state.get("Cluster")
+    if not cluster:
+        return False
+    pools = cluster.get("Pools")
+    rgs = cluster.get("ResourceGroups")
+    if not rgs:
+        return False
+    group_ids = rgs.keys()
     for _, details in pools.items():
         if details["CachedName"] != poolname:
             continue
