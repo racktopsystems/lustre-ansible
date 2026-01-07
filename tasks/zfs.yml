@@ -13,10 +13,6 @@
 - name: ZFS pools fact gathering
   zfs_pool_facts:
 
-- name: Debug pools
-  debug:
-    msg: "{{ ansible_facts.zfs.pools }}"
-
 - name: Mock create datasets
   make_lustre_zfs:
     poolname: "{{ item }}"
