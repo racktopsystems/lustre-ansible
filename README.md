@@ -69,6 +69,13 @@ Ansible connects to remote systems over SSH and normally assumes key-based authe
 
 It is rather inconvenient to type in the password each time, which is required when `sudo` requires user to enter the password. Create a password file at the root of this checked out repository to avoid interactive prompting. _Please_ do not check this file into `git`. You may call it anything, but during development we called it `bsradminpass`. The password must be in plain text, thus make sure this file is not wide open. Set very restrictive permissions to limit access.
 
+#### IPMI Credentials
+This is only relavant to physical systems. If any hosts in the Inventory configuration have `configure_ipmi: true`, then it is necessary to create a credentials file in the repository containing the password for the IPMI interface. The username for the IPMI user is set via the `group_vars/all` file and should normally not change. Adjust the value of `ipmi_username` as necessary. The password is very sensitive and must be handled carefully. Create a directory at the root of this repository called `sensitive` and place into it a file called `creds.yaml`. The contents of this file look as follows where the placeholder must be replaced with the password for the `ipmi_username` user.
+```yaml
+---
+ipmi_password: <password>
+```
+
 ## Configuration
 Once the environment is setup and you are ready to run the automation it is necessary to properly configure various settings specific to this environment. Two files govern these settings: `inventory.yml` and `group_vars/lustre_nodes`. As this project matures we may find need for multiple groups and thus variable files for each such group. At this time only one group is actively used: `lustre_nodes`.
 
