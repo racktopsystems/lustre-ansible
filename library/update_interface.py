@@ -39,7 +39,7 @@ def tokenize_config_file(path: str) -> [list, Exception]:
 def write_new_config_file(path: str, device: str, dest: str):
     tokens, e = tokenize_config_file(path)
     if e:
-        return False, e
+        return False, ("nodigest", "nodigest"), e
     new_tokens = replace_name_and_device(tokens, device)
     original_content = "".join(tokens)
     new_content = "".join(new_tokens)
