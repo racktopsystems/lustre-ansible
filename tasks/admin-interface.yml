@@ -27,6 +27,31 @@
         - iface_name != default_iface_desired_name
       register: netif_config_update_result
 
+    - name: Update PeerInterfaceIncludeList in the confd configuration file
+      # The PeerInterfaceIncludeList property in the configuration file must
+      # include the regex pattern which will ultimately match the name(s) of the
+      # inteface(s) over which confd peer communications are performed. We must
+      # ensure that this file correctly represents the name of the admin
+      # interface _after_ the renaming.
+      ansible.builtin.template:
+        src: templates/etc/racktop/confd/confd.conf.j2
+        dest: /etc/racktop/confd/confd.conf
+      when:
+        - is_not_witness
+      register: confd_config_update_result
+
+    - name: Notify confd service restart handler only if reboot is unnecessary
+      # We don't actually need this task to do anything. It is only here to
+      # allow us to conditionally trigger the notification using 'when'. We
+      # cannont do this in the task where we update the confd configuration
+      # file.
+      ansible.builtin.debug:
+      notify: Restart confd service
+      when:
+        - is_not_witness
+        - netif_config_update_result.changed | default(false)
+        - confd_config_update_result.changed | default(false)
+
     - name: Set default gateway if necessary
       ansible.builtin.lineinfile:
         path: /etc/sysconfig/network
