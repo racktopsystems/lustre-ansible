@@ -7,6 +7,7 @@ from typing import Any, Dict, List, Tuple
 
 from ansible.module_utils.basic import AnsibleModule
 
+DEFAULT_STATEFILE = "/etc/racktop/hiavd/serialized.dat"
 HIAVADM_CMD = "/usr/racktop/sbin/hiavadm"
 
 hwadm_list_pools_cmd = [
@@ -61,7 +62,7 @@ def ensure_pool_is_visible(
     return pool_exists_in_the_result(poolname, res), None
 
 
-def issue_refresh(addr: str = "", keydir: str = "/root/.ssh", locally: bool = True):
+def issue_hwd_refresh(addr: str = "", keydir: str = "/root/.ssh", locally: bool = True):
     ssh_command_prefix = generate_ssh_cmd_prefix(addr, keydir)
     cmd = hwadm_rescan_cmd if locally else ssh_command_prefix + hwadm_rescan_cmd
 
@@ -196,29 +197,40 @@ def check_and_repair_if_possible(poolname: str) -> Tuple[bool, Exception]:
 
 
 def check_pool_already_in_resource_group(
-    poolname: str, statefile: str = "/etc/racktop/hiavd/serialized.dat"
+    poolname: str, statefile: str = DEFAULT_STATEFILE
 ) -> bool:
     """Checks whether the given pool is already tied to a resoure group."""
     state = dict()
-    # We are not doing any exception handling here. If this fails there are
-    # some real problems with the system and the failure of the task is a
-    # relatively minor event in comparison.
-    with open(statefile, "rb") as fp:
-        state = json.loads(fp.read(-1))
-    cluster = state.get("Cluster")
-    if not cluster:
-        return False
-    pools = cluster.get("Pools")
-    rgs = cluster.get("ResourceGroups")
-    if not rgs:
-        return False
-    group_ids = rgs.keys()
-    for _, details in pools.items():
-        if details["CachedName"] != poolname:
-            continue
-        if details["ResourceGroupId"] in group_ids:
-            return True
+    # Gracefully handle absence of the state file here. If the file is missing
+    # assume that pool cannot be in _any_ resource group, since the cluster is
+    # not even configured.
+    try:
+        with open(statefile, "rb") as fp:
+            state = json.loads(fp.read(-1))
+        cluster = state.get("Cluster")
+        if not cluster:
+            return False
+        pools = cluster.get("Pools")
+        rgs = cluster.get("ResourceGroups")
+        if not rgs:
+            return False
+        group_ids = rgs.keys()
+        for _, details in pools.items():
+            if details["CachedName"] != poolname:
+                continue
+            if details["ResourceGroupId"] in group_ids:
+                return True
+    except IOError:
+        pass  # We fall through to return.
     return False
+
+
+def increment_missing_pool_count(poolname: str, missing_pools: Dict[str, int]):
+    """Increments count of a pool in the dict, adds if not already present."""
+    if poolname in missing_pools:
+        missing_pools[poolname] += 1
+    else:
+        missing_pools[poolname] = 1
 
 
 def run_module():
@@ -260,21 +272,34 @@ def run_module():
 
         module.exit_json(**result)
 
+    missing_pools = {}
+
+    local_hw_refresh_errors = list()
+    remote_hw_refresh_errors = list()
+
     backoff = 1
-    for _ in range(16):
+    for _ in range(4):
         ok_on_local, _ = ensure_pool_is_visible(poolname)
         if not ok_on_local:
-            _ = issue_refresh()
+            increment_missing_pool_count(poolname, missing_pools)
+
+            ok, err = issue_hwd_refresh()
+            if not ok:
+                local_hw_refresh_errors.append(err)
             time.sleep(backoff)  # Backoff just a bit, yes hacky
             backoff += 1
         else:
             break
 
     backoff = 1
-    for _ in range(16):
+    for _ in range(4):
         ok_on_peer, _ = ensure_pool_is_visible(poolname, ha_peer_ipaddr, locally=False)
         if not ok_on_peer:
-            _ = issue_refresh(addr=ha_peer_ipaddr, locally=False)
+            increment_missing_pool_count(poolname, missing_pools)
+
+            ok, err = issue_hwd_refresh(addr=ha_peer_ipaddr, locally=False)
+            if not ok:
+                remote_hw_refresh_errors.append(err)
             time.sleep(backoff)  # Backoff here as well, also hacky
             backoff += 1
         else:
@@ -302,12 +327,19 @@ def run_module():
                 delay += 1
                 continue
 
+            # Anything other than the cluster transitioning is considered an
+            # unrecoverable error and leads to the operation being aborted.
             module.fail_json(
                 msg="non-zero exit status",
                 cmd=err.cmd,
                 returncode=err.returncode,
                 stdout=err.stdout,
                 stderr=err.stderr,
+                missing_pools=missing_pools,
+                refresh_errors={
+                    "local": local_hw_refresh_errors,
+                    "remote": remote_hw_refresh_errors,
+                },
                 changed=False,
             )
         elif isinstance(err, IOError):
@@ -318,6 +350,11 @@ def run_module():
                 filename=err.filename,
                 filename2=err.filename2,
                 strerror=err.strerror,
+                missing_pools=missing_pools,
+                refresh_errors={
+                    "local": local_hw_refresh_errors,
+                    "remote": remote_hw_refresh_errors,
+                },
                 changed=False,
             )
         else:
@@ -345,10 +382,23 @@ def run_module():
                 returncode=err.returncode,
                 stdout=err.stdout,
                 stderr=err.stderr,
+                missing_pools=missing_pools,
+                refresh_errors={
+                    "local": local_hw_refresh_errors,
+                    "remote": remote_hw_refresh_errors,
+                },
                 changed=False,
             )
         else:
-            module.fail_json(msg=str(err), changed=False)
+            module.fail_json(
+                msg=str(err),
+                missing_pools=missing_pools,
+                refresh_errors={
+                    "local": local_hw_refresh_errors,
+                    "remote": remote_hw_refresh_errors,
+                },
+                changed=False,
+            )
 
     delay = 1
     err = None
@@ -371,7 +421,15 @@ def run_module():
             time.sleep(delay)
             delay += 1
     # If we got here we still have an error.
-    module.fail_json(msg=str(err), changed=True)
+    module.fail_json(
+        msg=str(err),
+        missing_pools=missing_pools,
+        refresh_errors={
+            "local": local_hw_refresh_errors,
+            "remote": remote_hw_refresh_errors,
+        },
+        changed=True,
+    )
 
 
 def main():
