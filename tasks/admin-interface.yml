@@ -7,16 +7,27 @@
     final_iface_name: "{{ default_iface_desired_name }}"
 
   block:
-    - name: Create necessary {{ default_iface_desired_name }} persistent interface naming rules
-      lineinfile:
-        path: "{{ net_persistent_rules_file }}"
-        create: yes
-        line: 'SUBSYSTEM=="net", ACTION=="add", ATTR{address}=="{{ mac_address }}", ATTR{type}=="1", NAME="{{ final_iface_name }}"'
-        regexp: 'ATTR{address}=="{{ mac_address }}".*NAME="{{ final_iface_name }}"'
+    - name: Create necessary {{ default_iface_desired_name }} systemd network link file
+      ansible.builtin.copy:
+        dest: {{ net_admin_link_file }}
+        content: |
+          [Match]
+          MACAddress={{ mac_address }}
+
+          [Link]
+          Name={{ final_iface_name }}
+        owner: root
+        group: root
+        mode: '0644'
       when:
         - is_not_witness
         - iface_name != default_iface_desired_name
-      notify: Reload udev rules
+      register: admin0_link_file
+
+    - name: Remove old udev rules file for admin0 if it exists
+      ansible.builtin.file:
+        path: {{ net_persistent_rules_file }}
+        state: absent
 
     - name: Update interface configuration file
       update_interface:
@@ -58,6 +69,10 @@
         line: "GATEWAY={{ default_gw_ipaddr }}"
         create: yes
       when: default_gw_ipaddr is defined and default_gw_ipaddr != ""
+
+    - name: Rebuild initramfs to pick up interface rename
+      ansible.builtin.command: dracut -f
+      when: admin0_link_file.changed
 
     - name: Reboot the system if network interface rename occurs
       vars:
