@@ -100,6 +100,11 @@
       when:
         - is_not_witness
 
+    # confd peer/client interface selection
+    - import_tasks: tasks/confd-config.yml
+      when:
+        - is_not_witness
+
     # ZFS filesystem configuration
     - import_tasks: tasks/zfs.yml
       when:
