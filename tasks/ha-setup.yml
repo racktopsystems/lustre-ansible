@@ -149,6 +149,18 @@
         - hiavd_force_config_recreation
       register: render_hiavd_state_result
 
+    # hiavd now asks lustred to mount and unmount Lustre targets on pool
+    # import and export. Remove the hook scripts earlier versions installed.
+    - name: Remove Lustre hook scripts replaced by lustred
+      ansible.builtin.file:
+        path: "/etc/racktop/hiavd/{{ item }}"
+        state: absent
+      loop:
+        - pre-export.sh
+        - post-import.sh
+      when:
+        - is_not_witness
+
     - name: Set hiavd configuration changes facts
       set_fact:
         hiavd_config_changed: >

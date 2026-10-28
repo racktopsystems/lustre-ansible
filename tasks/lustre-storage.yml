@@ -1,164 +1,222 @@
 ---
-- name: Check for existence of pool {{mgt_dataset_on_pool}}
-  ansible.builtin.stat:
-    path: /proc/spl/kstat/zfs/{{ mgt_dataset_on_pool }}/state
-  register: stat_pool_state_result
-  when:
-    - inventory_hostname in groups['mdt']
+# Lustre targets, created and mounted by lustred through lustreadm.
+#
+# Each HA group (oss, mds) lists its targets in the inventory:
+#
+#   lustre_targets:
+#     - pool: p_mdt01          # one of the group's `zpools`
+#       dataset: lustre-mdt00  # created as <pool>/<dataset>
+#       role: mgsmdt           # mgt, mgsmdt, mdt or ost
+#       # Optional:
+#       # index: 0             # default: the number that ends `dataset`
+#       # zfs_props: {recordsize: 1M}  # on top of lustred's defaults
+#       # mount_options: [abort_recov]
+#       # mountpoint: /lustre/custom   # default <MountBase>/<pool>/<dataset>
+#       # automount: false     # default true
+#       # options: ["--param=sys.timeout=40"]  # extra mkfs.lustre options
+#
+# Service nodes are the target's HA pair and MGS NIDs are the nodes of
+# `lustre_mgs_group`, both taken from each node's `ib_addrs`
+# (`lustre_node_nids` in group_vars/all), so no NIDs are listed by hand.
+#
+# A target is created on whichever node of its pair has the pool imported.
+# lustred keeps its settings as ZFS user properties on the dataset, and
+# hiavd asks lustred to mount and unmount a pool's targets when it imports
+# and exports the pool, so targets follow their pool on failover without
+# hook scripts or fstab entries. An existing target is never reformatted or
+# rewritten; differences from the inventory are reported instead, since
+# changing service nodes or MGS NIDs needs the file system stopped
+# (lustreadm dataset modify --writeconf).
 
-- name: Check for already configured Lustre management server
+- name: Ensure lustred is running
+  ansible.builtin.systemd_service:
+    name: lustred
+    enabled: true
+    state: started
+
+- name: Check that lustreadm manages pools and datasets
   ansible.builtin.command:
-    cmd: |
-      zfs list -Honame {{ mgt_dataset_on_pool }}/lustre-mgt
-  register: mgt_confd_result
-  failed_when: false
+    argv: ["{{ lustreadm_bin }}", --help]
+  register: lustreadm_help
   changed_when: false
-  when:
-    - inventory_hostname in groups['mdt']
+  check_mode: false
 
-- name: Configure Lustre management server if not already configured
+- name: Require a lustreadm with dataset roles and pool mounts
+  ansible.builtin.assert:
+    that: lustreadm_help.stdout is search('^ +pool[ ,]', multiline=True)
+    fail_msg: >-
+      {{ lustreadm_bin }} has no pool command. This playbook needs a platform
+      build where lustred manages Lustre targets and hiavd mounts them on
+      pool import; the PostImportHook/PreExportHook scripts it replaces are
+      no longer installed.
+    quiet: true
+
+- name: Collect the Lustre targets of both HA pairs
   vars:
-    prefix: " --servicenode="
-    suffix: "@o2ib"
-    servicenode_cmd_args: "{{ [prefix] | product(mds_mgsnode_ip_addrs) | map('join') | product([suffix]) | map('join') | list | join | trim }}"
-  ansible.builtin.command:
-    cmd: >
-      mkfs.lustre --mgs --fsname={{ filesystem_name }}
-        {{ servicenode_cmd_args }}
-        --backfstype=zfs --mkfsoptions="mountpoint=none"
-        {{ mgt_dataset_on_pool }}/lustre-mgt
-  when:
-    - inventory_hostname in groups['mdt']
-    - stat_pool_state_result.stat.exists
-    - mgt_confd_result.rc != 0
+    target_list: >-
+      {%- set ns = namespace(l=[]) -%}
+      {%- for g in ['oss', 'mds'] if groups[g] | default([]) | length > 0 -%}
+      {%- set first = hostvars[groups[g][0]] -%}
+      {%- for t in first.lustre_targets | default([]) -%}
+      {%- set role = t.role | default('') -%}
+      {%- set idx = t.index if t.index is defined else (t.dataset | default('') | regex_search('[0-9]+$')) -%}
+      {%- set idx = -1 if (role == 'mgt' or idx is none or idx == '') else idx | int -%}
+      {%- set kind = 'ost' if role == 'ost' else 'mdt' -%}
+      {%- set ns.l = ns.l + [{
+           'group': g,
+           'pool': t.pool | default(''),
+           'dataset': t.dataset | default(''),
+           'name': (t.pool | default('')) ~ '/' ~ (t.dataset | default('')),
+           'role': role,
+           'index': idx,
+           'key': kind ~ ':' ~ idx,
+           'pool_ok': (t.pool | default('')) in (first.zpools | default([])),
+           'spec': t}] -%}
+      {%- endfor -%}
+      {%- endfor -%}
+      {{ ns.l }}
+  ansible.builtin.set_fact:
+    lustre_all_targets: "{{ target_list }}"
+    lustre_ha_group: "{{ 'oss' if inventory_hostname in groups['oss'] else 'mds' }}"
 
-- name: Create required Lustre mgt mountpoint(s)
-  ansible.builtin.file:
-    state: directory
-    path: /storage/{{mgt_dataset_on_pool}}/lustre-mgt
-  when:
-    - inventory_hostname in groups['mdt']
-
-- name: Mount the lustre-mgt dataset
-  ansible.posix.mount:
-    fstype: lustre
-    state: mounted
-    src: "{{mgt_dataset_on_pool}}/lustre-mgt"
-    path: /storage/{{mgt_dataset_on_pool}}/lustre-mgt
-  when:
-    - inventory_hostname in groups['mdt']
-    - stat_pool_state_result.stat.exists
-
-# Metadata server configuration below
-
-- name: Check for already configured Lustre metadata server
-  ansible.builtin.command:
-    cmd: |
-      zfs list -Honame {{ mgt_dataset_on_pool }}/{{ item }}
-  register: mdt_confd_result
-  failed_when: false
-  changed_when: false
-  loop: "{{ mdt_mountpoints[mds_dataset_on_pool] }}"
-  when:
-    - inventory_hostname in groups['mdt']
-
-- name: Configure Lustre metadata server if not already configured
+- name: Validate Lustre targets
   vars:
-    prefix_a: " --mgsnode="
-    prefix_b: " --servicenode="
-    suffix: "@o2ib"
-    mgsnode_cmd_args: "{{ [prefix_a] | product(mds_mgsnode_ip_addrs) | map('join') | product([suffix]) | map('join') | list | join | trim  }}"
-    servicenode_cmd_args: "{{ [prefix_b] | product(mds_mgsnode_ip_addrs) | map('join') | product([suffix]) | map('join') | list | join | trim }}"
-  ansible.builtin.command:
-    cmd: >
-      mkfs.lustre --mdt --fsname={{ filesystem_name }} --index=0
-        {{ mgsnode_cmd_args }}
-        {{ servicenode_cmd_args }}
-        --mkfsoptions="recordsize=128k -o compression=lz4 -o mountpoint=none"
-        --backfstype=zfs {{ mds_dataset_on_pool }}/{{ item }}
-  loop: "{{ mdt_mountpoints[mds_dataset_on_pool] }}"
-  loop_control:
-    index_var: idx
-  when:
-    - inventory_hostname in groups['mdt']
-    - stat_pool_state_result.stat.exists
-    - mdt_confd_result.results[idx].rc != 0
+    indexed: "{{ lustre_all_targets | rejectattr('role', 'eq', 'mgt') | list }}"
+    mgs: "{{ lustre_all_targets | selectattr('role', 'in', ['mgt', 'mgsmdt']) | list }}"
+    nodes: "{{ (groups['oss'] | default([])) + (groups['mds'] | default([])) }}"
+  ansible.builtin.assert:
+    that:
+      - filesystem_name is defined
+      - filesystem_name is match('^[A-Za-z0-9_-]{1,8}$')
+      - lustre_all_targets | rejectattr('role', 'in', ['mgt', 'mgsmdt', 'mdt', 'ost']) | list | length == 0
+      - lustre_all_targets | rejectattr('pool_ok') | list | length == 0
+      - lustre_all_targets | selectattr('dataset', 'eq', '') | list | length == 0
+      - lustre_all_targets | map(attribute='name') | unique | length == lustre_all_targets | length
+      - indexed | selectattr('index', 'lt', 0) | list | length == 0
+      - indexed | map(attribute='key') | unique | length == indexed | length
+      - mgs | length == 1
+      - mgs | map(attribute='group') | first == lustre_mgs_group
+      - nodes | map('extract', hostvars, 'lustre_node_nids') | select('eq', '') | list | length == 0
+    fail_msg: >-
+      Lustre targets are inconsistent. Each needs a pool from its group's
+      zpools, a dataset name, and a role of mgt, mgsmdt, mdt or ost. MDTs and
+      OSTs need an index (given, or the number ending the dataset name) that
+      is unique among MDTs or among OSTs. Exactly one target, in group
+      {{ lustre_mgs_group }}, serves the MGS. filesystem_name must be 1-8
+      letters, digits, '_' or '-', and every HA node needs an address in
+      ib_addrs. Targets: {{ lustre_all_targets | map(attribute='name') | zip(lustre_all_targets | map(attribute='role'), lustre_all_targets | map(attribute='index')) | list }}
+    quiet: true
+  when: lustre_all_targets | length > 0
 
-- name: Create required Lustre mds mountpoint(s)
-  ansible.builtin.file:
-    state: directory
-    path: /storage/{{ mds_dataset_on_pool }}/{{ item }}
-  loop: "{{ mdt_mountpoints[mds_dataset_on_pool] }}"
-  when:
-    - inventory_hostname in groups['mdt']
+- name: Gather imported ZFS pools
+  zfs_pool_facts:
 
-- name: Mount required mds dataset
-  ansible.posix.mount:
-    fstype: lustre
-    state: mounted
-    src: "{{mds_dataset_on_pool}}/{{item}}"
-    path: /storage/{{mds_dataset_on_pool}}/{{item}}
-  loop: "{{mdt_mountpoints[mds_dataset_on_pool]}}"
-  when:
-    - inventory_hostname in groups['mdt']
-    - stat_pool_state_result.stat.exists
+- name: Remove fstab entries for Lustre targets from earlier playbook versions
+  ansible.builtin.lineinfile:
+    path: /etc/fstab
+    regexp: '^\S+\s+/storage/\S+\s+lustre\s'
+    state: absent
 
-# Object Storage configuration below
-- name: Check for existence of pool {{oss_dataset_on_pool}}
-  ansible.builtin.stat:
-    path: /proc/spl/kstat/zfs/{{ oss_dataset_on_pool }}/state
-  register: stat_pool_state_result
-  when:
-    - inventory_hostname in groups['ost']
-
-- name: Check for already configured Lustre object storage server
-  ansible.builtin.command:
-    cmd: |
-      zfs list -Honame {{ oss_dataset_on_pool }}/{{ item }}
-  loop: "{{ ost_mountpoints[oss_dataset_on_pool] }}"
-  register: ost_confd_result
-  failed_when: false
-  changed_when: false
-  when:
-    - inventory_hostname in groups['ost']
-
-- name: Configure Lustre object storage server if not already configured
+- name: Configure the Lustre targets of this HA pair
   vars:
-    prefix_a: " --mgsnode="
-    prefix_b: " --servicenode="
-    suffix: "@o2ib"
-    mgsnode_cmd_args: "{{ [prefix_a] | product(oss_mgsnode_ip_addrs) | map('join') | product([suffix]) | map('join') | list | join | trim  }}"
-    servicenode_cmd_args: "{{ [prefix_b] | product(oss_node_ip_addrs) | map('join') | product([suffix]) | map('join') | list | join | trim }}"
-  ansible.builtin.command:
-    cmd: >
-      mkfs.lustre --ost --fsname={{ filesystem_name }} --index=0
-        {{ mgsnode_cmd_args }}
-        {{ servicenode_cmd_args }}
-        --mkfsoptions="recordsize=1M -o compression=lz4 -o mountpoint=none"
-        --backfstype=zfs {{ oss_dataset_on_pool }}/lustre-ost00
-  loop: "{{ ost_mountpoints[oss_dataset_on_pool] }}"
-  loop_control:
-    index_var: idx
-  when:
-    - inventory_hostname in groups['ost']
-    - stat_pool_state_result.stat.exists
-    - ost_confd_result.results[idx].rc != 0
+    my_targets: "{{ lustre_all_targets | selectattr('group', 'eq', lustre_ha_group) | selectattr('pool', 'in', ansible_facts.zfs.pools) | list }}"
+    service_nodes: "{{ groups[lustre_ha_group] | map('extract', hostvars, 'lustre_node_nids') | list }}"
+    mgs_nids: "{{ groups[lustre_mgs_group] | map('extract', hostvars, 'lustre_node_nids') | list }}"
+    target_state: "{{ dict(lustre_existing | map(attribute='Dataset') | zip(lustre_existing)) }}"
+  when: my_targets | length > 0
+  block:
+    - name: List Lustre targets
+      ansible.builtin.command:
+        argv: ["{{ lustreadm_bin }}", --json, dataset, list]
+      register: lustre_list
+      changed_when: false
+      check_mode: false
 
-- name: Create required Lustre oss mountpoint(s)
-  ansible.builtin.file:
-    state: directory
-    path: /storage/{{ oss_dataset_on_pool }}/{{ item }}
-  loop: "{{ ost_mountpoints[oss_dataset_on_pool] }}"
-  when:
-    - inventory_hostname in groups['ost']
+    - name: Record existing Lustre targets
+      ansible.builtin.set_fact:
+        lustre_existing: "{{ lustre_list.stdout | from_json | default([], true) }}"
 
-- name: Mount required oss dataset(s)
-  ansible.posix.mount:
-    fstype: lustre
-    state: mounted
-    src: "{{ mds_dataset_on_pool }}/{{ item }}"
-    path: /storage/{{ oss_dataset_on_pool }}/{{ item }}
-  loop: "{{ ost_mountpoints[oss_dataset_on_pool] }}"
-  when:
-    - inventory_hostname in groups['ost']
-    - stat_pool_state_result.stat.exists
+    # Targets are created unmounted and mounted below, MGS first, so that an
+    # MDT or OST never tries to register before its MGS is up.
+    - name: Create Lustre target {{ item.name }}
+      ansible.builtin.command:
+        argv: >-
+          {{ [lustreadm_bin, '--json', 'dataset', 'create',
+              '--pool', item.pool, '--dataset', item.dataset,
+              '--role', item.role, '--fsname', filesystem_name]
+             + (['--index', item.index | string] if item.role != 'mgt' else [])
+             + ((mgs_nids | map('regex_replace', '^', '--mgsnid=') | list) if item.role in ['mdt', 'ost'] else [])
+             + (service_nodes | map('regex_replace', '^', '--servicenode=') | list)
+             + ((item.spec.zfs_props | default({})).items() | map('join', '=') | map('regex_replace', '^', '--zfs-prop=') | list)
+             + (item.spec.options | default([]) | map('regex_replace', '^', '--option=') | list)
+             + (item.spec.mount_options | default([]) | map('regex_replace', '^', '--mount-option=') | list)
+             + (['--mountpoint', item.spec.mountpoint] if item.spec.mountpoint is defined else [])
+             + ([] if item.spec.automount | default(true) | bool else ['--no-automount']) }}
+      loop: "{{ my_targets | rejectattr('name', 'in', lustre_existing | map(attribute='Dataset') | list) | list }}"
+      loop_control:
+        label: "{{ item.name }} ({{ item.role }})"
+      register: lustre_create
+
+    - name: List Lustre targets after creation
+      ansible.builtin.command:
+        argv: ["{{ lustreadm_bin }}", --json, dataset, list]
+      register: lustre_list
+      changed_when: false
+      check_mode: false
+      when: lustre_create is changed
+
+    - name: Record Lustre targets after creation
+      ansible.builtin.set_fact:
+        lustre_existing: "{{ lustre_list.stdout | from_json | default([], true) }}"
+      when: lustre_create is changed
+
+    - name: Report Lustre targets that differ from the inventory
+      vars:
+        cur: "{{ target_state[item.name] }}"
+        want_mgs: "{{ mgs_nids if item.role in ['mdt', 'ost'] else (cur.MgsNids | default([], true)) }}"
+      ansible.builtin.debug:
+        msg: >-
+          {{ item.name }} differs from the inventory and was left as is.
+          Role {{ cur.Role }} (want {{ item.role }}), index {{ cur.Index }} (want {{ item.index }}),
+          service nodes {{ cur.ServiceNodes | default([], true) }} (want {{ service_nodes }}),
+          MGS NIDs {{ cur.MgsNids | default([], true) }} (want {{ want_mgs }}).
+          Use lustreadm dataset modify to change service nodes or MGS NIDs.
+      loop: "{{ my_targets | selectattr('name', 'in', target_state) | list }}"
+      loop_control:
+        label: "{{ item.name }}"
+      when: >-
+        cur.Role != item.role or (cur.Index | int) != item.index or
+        (cur.ServiceNodes | default([], true) | sort) != (service_nodes | sort) or
+        (cur.MgsNids | default([], true) | sort) != (want_mgs | sort)
+
+    # lustred mounts automount targets on every later pool import; these
+    # mount new targets now, and any left unmounted, in MGS, MDT, OST order.
+    - name: Mount MGS target
+      ansible.builtin.command:
+        argv: ["{{ lustreadm_bin }}", --json, dataset, modify, --dataset, "{{ item.name }}", --mount]
+      loop: "{{ my_targets | selectattr('role', 'in', ['mgt', 'mgsmdt']) | selectattr('name', 'in', target_state) | list }}"
+      loop_control:
+        label: "{{ item.name }}"
+      when:
+        - target_state[item.name].AutoMount
+        - not target_state[item.name].Mounted
+
+    - name: Mount MDT targets
+      ansible.builtin.command:
+        argv: ["{{ lustreadm_bin }}", --json, dataset, modify, --dataset, "{{ item.name }}", --mount]
+      loop: "{{ my_targets | selectattr('role', 'eq', 'mdt') | selectattr('name', 'in', target_state) | list }}"
+      loop_control:
+        label: "{{ item.name }}"
+      when:
+        - target_state[item.name].AutoMount
+        - not target_state[item.name].Mounted
+
+    - name: Mount OST targets
+      ansible.builtin.command:
+        argv: ["{{ lustreadm_bin }}", --json, dataset, modify, --dataset, "{{ item.name }}", --mount]
+      loop: "{{ my_targets | selectattr('role', 'eq', 'ost') | selectattr('name', 'in', target_state) | list }}"
+      loop_control:
+        label: "{{ item.name }}"
+      when:
+        - target_state[item.name].AutoMount
+        - not target_state[item.name].Mounted

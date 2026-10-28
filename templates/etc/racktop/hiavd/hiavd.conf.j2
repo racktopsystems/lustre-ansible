@@ -6,8 +6,10 @@ DebugSync = false
 CommsPort = {{ ha_comms_port }}
 ListenAddr = ""
 VnicIf = ""
-PreExportHook = "/etc/racktop/hiavd/pre-export.sh"
-PostImportHook = "/etc/racktop/hiavd/post-import.sh"
+# Lustre targets follow their pool through lustred, which hiavd calls on
+# pool import and export, so no hook scripts are needed.
+PreExportHook = ""
+PostImportHook = ""
 
 [[ClusterNodes]]
   Witness = false

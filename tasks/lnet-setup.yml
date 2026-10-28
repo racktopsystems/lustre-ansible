@@ -2,6 +2,12 @@
 # LNET is managed through lustred via lustreadm, which also persists the
 # running configuration to /etc/lnet.conf. All InfiniBand interfaces with an
 # address in `ib_addrs` are bound to a single network, `lnet_name`.
+- name: Ensure lustred is running
+  ansible.builtin.systemd_service:
+    name: lustred
+    enabled: true
+    state: started
+
 - name: Configure LNET network {{ lnet_name }}
   vars:
     lnet_ifaces: "{{ ib_addrs | dict2items | selectattr('value') | map(attribute='key') | sort }}"

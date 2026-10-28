@@ -62,6 +62,19 @@ oss:
     # ZFS pools managed by this HA pair.
     zpools:
       - p_ost01
+    # Lustre targets of this pair, created by lustred on whichever node has
+    # the pool imported. role is mgt, mgsmdt, mdt or ost. The MDT/OST index
+    # is the number that ends the dataset name unless `index` is given, and
+    # must be unique across the file system. See tasks/lustre-storage.yml for
+    # the optional settings (zfs_props, mount_options, mountpoint, automount,
+    # options).
+    lustre_targets:
+      - pool: p_ost01
+        dataset: lustre-ost00
+        role: ost
+      - pool: p_ost01
+        dataset: lustre-ost01
+        role: ost
 
 # HA pair of metadata/management servers.
 mds:
@@ -98,14 +111,12 @@ mds:
     witness_instance: 1
     zpools:
       - p_mdt01
-
-# Lustre storage tasks select hosts by the ost and mdt groups.
-ost:
-  children:
-    oss:
-mdt:
-  children:
-    mds:
+    # Combined MGS and first MDT. For a standalone MGS use two targets:
+    # role mgt (e.g. lustre-mgt) and role mdt (lustre-mdt00).
+    lustre_targets:
+      - pool: p_mdt01
+        dataset: lustre-mdt00
+        role: mgsmdt
 
 # HA witness. One host can witness both HA pairs: list it once per pair under
 # different inventory names with the same ansible_host. role selects the pair

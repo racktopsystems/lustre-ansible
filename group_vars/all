@@ -14,6 +14,18 @@ lustreadm_bin: /usr/racktop/sbin/lustreadm
 lnet_nettype: o2ib
 lnet_netnum: 0
 lnet_name: "{{ lnet_nettype }}{{ lnet_netnum }}"
+# Network part of this site's NIDs: "o2ib" for o2ib0, "o2ib1" otherwise.
+lnet_nid_net: "{{ lnet_nettype if (lnet_netnum | int) == 0 else lnet_name }}"
+# This host's LNET NIDs, comma-separated: one per address in `ib_addrs`. In
+# lustreadm terms this describes one node (one --servicenode or --mgsnid).
+lustre_node_nids: "{{ ib_addrs | default({}) | dict2items | map(attribute='value') | select | map('regex_replace', '/.*$', '@' ~ lnet_nid_net) | join(',') }}"
+
+# Lustre targets (tasks/lustre-storage.yml) are created and mounted by
+# lustred through lustreadm. Each HA group (oss, mds) lists its targets in
+# `lustre_targets` in the inventory. `lustre_mgs_group` names the HA group
+# whose targets include the MGS (role mgt or mgsmdt); its nodes' NIDs are
+# passed to every MDT and OST as --mgsnid.
+lustre_mgs_group: mds
 
 # Addresses of NTP servers with which target Lustre nodes should synchronize
 # their clocks.

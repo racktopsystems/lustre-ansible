@@ -10,23 +10,4 @@
   when:
     - item not in hiavd.pools
 
-- name: ZFS pools fact gathering
-  zfs_pool_facts:
-
-- name: Mock create datasets
-  make_lustre_zfs:
-    poolname: "{{ item }}"
-    # Only datasets that belong to the pool present on the given node will be
-    # created. We are ensuring that no matter how the pools are currently
-    # placed, whether split between nodes or multiple on a single node, creation
-    # of the ZFS datasets will take place on the node where the given pool is
-    # currently imported. The `ansible_facts.zfs.pools` iterable is a list of
-    # pools discovered on this system.
-    details: "{{ datasets[item] | default('this-is-not-a-pool') }}"
-    dryrun: true # For now, don't actually create these datasets
-  with_items:
-    - "{{ ansible_facts.zfs.pools }}"
-  # when: ("zfs" in ansible_facts and ansible_facts.zfs.pools)
-  when:
-    - ("zfs" in ansible_facts)
-    - ansible_facts.zfs.pools
+# Lustre target datasets are created by lustred (tasks/lustre-storage.yml).

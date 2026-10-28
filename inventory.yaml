@@ -22,7 +22,7 @@ oss:
       admin_iface: ens259f0
       hb_iface: ens259f1
       hb_iface_ipaddr: 192.255.0.1/24
-      ipmi_ip_address: 10.2.11.9/24
+      ipmi_ip_address: 10.2.11.9
       configure_ipmi: false
       ib_addrs:
         ib0: 192.168.100.11/24
@@ -37,7 +37,7 @@ oss:
       admin_iface: ens259f0
       hb_iface: ens259f1
       hb_iface_ipaddr: 192.255.0.2/24
-      ipmi_ip_address: 10.2.11.13/24
+      ipmi_ip_address: 10.2.11.13
       configure_ipmi: false
       ib_addrs:
         ib0: 192.168.100.12/24
@@ -46,6 +46,11 @@ oss:
     witness_instance: 0 # hiavd 4746, confd 2379/2380
     zpools:
       - TODO_oss_pool # TODO: OSS ZFS pool name(s)
+    # TODO: confirm the OST layout. See inventory.yaml.example.
+    lustre_targets:
+      - pool: TODO_oss_pool
+        dataset: lustre-ost00
+        role: ost
 
 mds:
   hosts:
@@ -58,7 +63,7 @@ mds:
       admin_iface: ens259f0
       hb_iface: ens259f1
       hb_iface_ipaddr: 192.255.0.1/24
-      ipmi_ip_address: 10.2.11.14/24
+      ipmi_ip_address: 10.2.11.14
       configure_ipmi: false
       ib_addrs:
         ib0: 192.168.100.13/24
@@ -73,7 +78,7 @@ mds:
       admin_iface: ens259f0
       hb_iface: ens259f1
       hb_iface_ipaddr: 192.255.0.2/24
-      ipmi_ip_address: 10.2.11.15/24
+      ipmi_ip_address: 10.2.11.15
       configure_ipmi: false
       ib_addrs:
         ib0: 192.168.100.14/24
@@ -82,13 +87,11 @@ mds:
     witness_instance: 1 # hiavd 4747, confd 2381/2382
     zpools:
       - TODO_mds_pool # TODO: MDS/MGS ZFS pool name(s)
-
-ost:
-  children:
-    oss:
-mdt:
-  children:
-    mds:
+    # TODO: confirm combined MGS+MDT (mgsmdt) vs separate mgt and mdt targets.
+    lustre_targets:
+      - pool: TODO_mds_pool
+        dataset: lustre-mdt00
+        role: mgsmdt
 
 # TODO: confirm lustre-stennis-witness1 (10.2.26.15) is the HA witness for
 # both pairs.

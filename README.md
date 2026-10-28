@@ -1,8 +1,6 @@
 # lustre-ansible
 This repository contains scripts and Ansible-powered IaC playbooks for configuring RackTop's Linux-based Lustre configurations. This is work in progress and is at this moment not complete. There are a number of gaps in this stack and over time we are going to be filling them.
 
-At this moment we can only support a single pool, because we use the name of the pool as an index (think hash table) and the tasks which use this approach do not loop through a list of pools. Instead, a variable stores the name of the pool and that variable is used as a key into the hash.
-
 ## Capabilities
 ### Out of scope
 Once this project is fully implemented we expect certain functions to remain out of scope. The following things are going to remain out of scope for the foreseable future:
@@ -18,7 +16,7 @@ Once this project is fully implemented we expect certain functions to remain out
 - Common system settings such as DNS, NTP, SELinux
 - High availability and associated resource groups
 - Lnet setup (Lustre networking), via `lustreadm lnet` on the InfiniBand interfaces in `ib_addrs`
-- Lustre storage configuration
+- Lustre storage configuration, via `lustreadm dataset` (lustred creates, mounts and fails over the targets)
 
 ## Repository organization
 We chose to make things fairly modular and loosely coupled. There is a primary playbook called `global-playbook.yml` which is a meta playbook and does not itself has much code. It however imports tasks and handlers from other files. The aim is to progressively develop new functionality and place it into new or existing files in the `tasks` directory.
@@ -92,8 +90,7 @@ The top-most level in this file is a hash containing group names, each of which 
 #### Hosts
 The HA tasks look hosts up by fixed inventory names, so the Lustre servers must be named `ossnode1`, `ossnode2`, `mdsnode1` and `mdsnode2`. The real address of each host is supplied with `ansible_host`. The groups are:
 
-- `oss` and `mds`: the two HA pairs. Each group sets `witness_instance` (see below) and may define a `zpools` list of the ZFS pools managed by that pair.
-- `ost` and `mdt`: used by the Lustre storage tasks. They contain the `oss` and `mds` groups respectively.
+- `oss` and `mds`: the two HA pairs. Each group sets `witness_instance` (see below), and may define a `zpools` list of the ZFS pools managed by that pair and a `lustre_targets` list of the Lustre targets on those pools (see "Lustre targets" below).
 - `cluster_witness`: the HA witness. One host can witness both pairs by listing it once per pair under different inventory names with the same `ansible_host`. Each entry sets `role` (`oss` or `mds`) and `witness_instance`, which must match the value on that pair's group.
 - `lustre_nodes`: everything the playbooks configure (`oss`, `mds` and `cluster_witness`). The witness must be included so its facts are available when the HA peers are configured.
 
@@ -111,7 +108,7 @@ Every server in `oss` and `mds` must define `hostname`, `first_ha_node` (true on
 #### Variables
 To create variables applicable only to this group create another key at the same level of the hierarchy as `hosts` named `vars`. See example below where we create a variable called `widget_count`. Each group can have the same variables but with different values, which allows for a level of customization in playbooks based on the system's or group's role or purpose.
 ```yaml
-ost:
+oss:
   hosts:
     192.168.10.1:
     192.168.10.2:
@@ -120,7 +117,28 @@ ost:
 ```
 
 ### Group variables file
-In addition to the inventory file which contains _all_ remote systems that Ansible needs to know about we created a `group_vars/example_lustre_nodes` variables file. This file should be named `lustre_nodes`, which will match the name of the group defined in the inventory file. Thus, variables in this file will be made available at runtime to all systems in the inventory which belong to the `lustre_nodes` group. This file is meant to provide environment-specific parameters, but unlike the inventory file where variables are specific to each system, these variables will apply to _all_ members of the `lustre_nodes` group.
+In addition to the inventory file which contains _all_ remote systems that Ansible needs to know about we created a `group_vars/example_lustre_nodes` variables file. This file should be named `lustre_nodes`, which will match the name of the group defined in the inventory file. Thus, variables in this file will be made available at runtime to all systems in the inventory which belong to the `lustre_nodes` group. This file is meant to provide environment-specific parameters, but unlike the inventory file where variables are specific to each system, these variables will apply to _all_ members of the `lustre_nodes` group. It sets `filesystem_name`, and `lustre_mgs_group` if the MGS is not on the `mds` pair.
+
+### Lustre targets
+Lustre targets are managed by lustred through `lustreadm` (`tasks/lustre-storage.yml`); the playbook no longer runs `mkfs.lustre`, writes fstab entries or installs hiavd hook scripts. Each HA group lists its targets in the inventory:
+```yaml
+mds:
+  vars:
+    zpools:
+      - p_mdt01
+    lustre_targets:
+      - pool: p_mdt01
+        dataset: lustre-mdt00
+        role: mgsmdt
+```
+- `role` is `mgt` (standalone MGS), `mgsmdt` (combined MGS and MDT), `mdt` or `ost`. Exactly one target serves the MGS, in the `lustre_mgs_group` pair (default `mds`).
+- The MDT/OST index is the number that ends the dataset name (`lustre-ost03` is index 3) unless `index` is given, and must be unique among MDTs or among OSTs.
+- Optional per target: `zfs_props` (added to lustred's defaults of `compression=lz4`, `mountpoint=none` and, for OSTs, `recordsize=1M`), `mount_options`, `mountpoint` (default `/lustre/<pool>/<dataset>`), `automount` (default `true`) and `options` (extra `mkfs.lustre` options lustred allows: `--param=`, `--network=`, `--comment=`).
+- Service nodes are the target's HA pair and MGS NIDs are the nodes of the MGS pair, both built from each node's `ib_addrs` on the `lnet_name` network.
+
+A target is created on whichever node of its pair has the pool imported, then mounted, MGS first, then MDTs, then OSTs. lustred stores each target's settings as ZFS user properties, and hiavd asks lustred to mount and unmount a pool's targets when it imports and exports the pool, so targets follow their pool on failover. An existing target is never reformatted or changed: the playbook reports one whose role, index, service nodes or MGS NIDs differ from the inventory, since changing those needs the file system stopped (`lustreadm dataset modify --writeconf`).
+
+This requires a platform build in which lustred manages targets and hiavd calls it on import and export; the playbook checks for `lustreadm pool` and stops otherwise. Re-running the playbook on a system set up by an earlier version removes the old hook scripts and the `/storage` Lustre fstab entries; targets already mounted under `/storage` stay mounted there until their next unmount, and lustred mounts them under `/lustre` from then on.
 
 ## Running the playbook
 ### Runtime dependencies

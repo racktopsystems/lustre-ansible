@@ -108,9 +108,6 @@
     # hiavd configuration
     - import_tasks: tasks/ha-setup.yml
 
-    - import_tasks: tasks/ha-hooks-setup.yml
-      when:
-        - is_not_witness
     #
     # Tasks for configuring Infiniband interfaces
     - import_tasks: tasks/ib-setup.yml
