@@ -38,7 +38,7 @@ def main():
         uuid2=dict(type="str", required=True),
     )
 
-    module = AnsibleModule(argument_spec=module_args, supports_check_mode=False)
+    module = AnsibleModule(argument_spec=module_args, supports_check_mode=True)
 
     uuid_1 = module.params["uuid1"]
     uuid_2 = module.params["uuid2"]

@@ -1,55 +1,133 @@
+# Example inventory. Copy to inventory.yaml and fill in site-specific values.
+#
+# The HA tasks look hosts up by fixed inventory names, so the Lustre servers
+# MUST be named ossnode1, ossnode2, mdsnode1 and mdsnode2. The real address of
+# each host is supplied with ansible_host.
+
+# Lustre clients. Not configured by global-playbook.yml.
 clients:
   hosts:
-    192.168.10.1:
+    client1:
+      ansible_host: 192.168.10.1
       default_gw_ipaddr:
       hostname: rhel8-client1
-      hb_iface_ipaddr: 192.255.0.2
       ipmi_ipaddr: 10.100.100.1
       ipmi_netmask: 255.255.255.0
       mgmt_iface: ens259f0
 
-# Place all the object storage hosts in this group. Each ost host should be a
-# key in the hosts hash.
-ost:
+# HA pair of object storage servers.
+oss:
   hosts:
-    192.168.10.2:
-      hb_iface_ipaddr: 192.255.0.1
+    ossnode1:
+      ansible_host: 192.168.10.2
+      # This system's BrickStor license (.oreg), relative to the repository
+      # root or absolute.
+      license_file: inputs/registration/ossnode1.oreg
       hostname: rhel8-oss1
+      # Exactly one node of each HA pair must have first_ha_node: true.
+      first_ha_node: true
+      # Address used to reach the HA peer over SSH as root.
+      ha_peer_ipaddr: 192.168.10.3
+      # Management interface; confd peers communicate only over it.
+      admin_iface: ens259f0
+      # Physical heartbeat link. Its NetworkManager connection is renamed to
+      # hb0 and given hb_iface_ipaddr. Interface addresses are CIDR.
+      hb_iface: ens259f1
+      hb_iface_ipaddr: 192.255.0.1/24
+      ipmi_ip_address: 10.100.100.2
+      configure_ipmi: false
+      # CIDR addresses; set unused interfaces to null.
       ib_addrs:
-        ib0: 192.168.2.12
+        ib0: 192.168.2.12/24
         ib1: null
-    192.168.10.3:
-      hb_iface_ipaddr: 192.255.0.2
+    ossnode2:
+      ansible_host: 192.168.10.3
+      license_file: inputs/registration/ossnode2.oreg
       hostname: rhel8-oss2
+      first_ha_node: false
+      ha_peer_ipaddr: 192.168.10.2
+      admin_iface: ens259f0
+      hb_iface: ens259f1
+      hb_iface_ipaddr: 192.255.0.2/24
+      ipmi_ip_address: 10.100.100.3
+      configure_ipmi: false
       ib_addrs:
-        ib0: 192.168.2.14
+        ib0: 192.168.2.14/24
         ib1: null
+  vars:
+    # Witness service instance serving this pair. Instance N uses hiavd port
+    # 4746+N and confd ports 2379+2N/2380+2N on the witness. Each pair that
+    # shares a witness host needs a different instance.
+    witness_instance: 0
+    # ZFS pools managed by this HA pair.
+    zpools:
+      - p_ost01
 
-# Place all the metadata and management hosts in this group. Each mdt host
-# should be a key in the hosts hash.
-mdt:
+# HA pair of metadata/management servers.
+mds:
   hosts:
-    192.168.10.4:
-      hb_iface_ipaddr: 192.255.0.1
+    mdsnode1:
+      ansible_host: 192.168.10.4
+      license_file: inputs/registration/mdsnode1.oreg
       hostname: rhel8-mdt1
+      first_ha_node: true
+      ha_peer_ipaddr: 192.168.10.5
+      admin_iface: ens259f0
+      hb_iface: ens259f1
+      hb_iface_ipaddr: 192.255.0.1/24
+      ipmi_ip_address: 10.100.100.4
+      configure_ipmi: false
       ib_addrs:
         ib0: null
-        ib1: 192.168.2.16
-      peers:
-    192.168.10.5:
-      hb_iface_ipaddr: 192.255.0.2
+        ib1: 192.168.2.16/24
+    mdsnode2:
+      ansible_host: 192.168.10.5
+      license_file: inputs/registration/mdsnode2.oreg
       hostname: rhel8-mdt2
+      first_ha_node: false
+      ha_peer_ipaddr: 192.168.10.4
+      admin_iface: ens259f0
+      hb_iface: ens259f1
+      hb_iface_ipaddr: 192.255.0.2/24
+      ipmi_ip_address: 10.100.100.5
+      configure_ipmi: false
       ib_addrs:
         ib0: null
-        ib1: 192.168.2.18
-      peers:
+        ib1: 192.168.2.18/24
+  vars:
+    witness_instance: 1
+    zpools:
+      - p_mdt01
 
-# This creates the lustre_nodes group and assigns the 'mdt' and 'ost' host
-# groups to it.
-lustre_nodes:
-  # This children namespace is required by Ansible. It simply makes explicit
-  # the fact that the ost and mdt groups are children of the lustre_nodes
-  # group.
+# Lustre storage tasks select hosts by the ost and mdt groups.
+ost:
   children:
-    ost:
-    mdt:
+    oss:
+mdt:
+  children:
+    mds:
+
+# HA witness. One host can witness both HA pairs: list it once per pair under
+# different inventory names with the same ansible_host. role selects the pair
+# (oss or mds) and witness_instance selects the confd/hiavd service instance
+# serving that pair. It must equal the pair's witness_instance.
+cluster_witness:
+  hosts:
+    witness-oss:
+      ansible_host: 192.168.10.6
+      hostname: rhel8-witness1
+      role: oss
+      witness_instance: 0
+    witness-mds:
+      ansible_host: 192.168.10.6
+      hostname: rhel8-witness1
+      role: mds
+      witness_instance: 1
+
+# All hosts configured by the playbooks. The witness must be included so its
+# facts are available when the HA peers are configured.
+lustre_nodes:
+  children:
+    oss:
+    mds:
+    cluster_witness:

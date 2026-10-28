@@ -1,0 +1,112 @@
+# Stennis site inventory. Values marked TODO must be confirmed before running.
+# See inventory.yaml.example for documentation of each field.
+
+clients:
+  hosts:
+    client1:
+      ansible_host: 10.2.26.10
+      default_gw_ipaddr: 10.2.26.254
+      hostname: lustre-stennis-client1
+      ipmi_ipaddr: 10.2.11.10
+      ipmi_netmask: 255.255.255.0
+      mgmt_iface: ens259f0
+
+oss:
+  hosts:
+    ossnode1:
+      ansible_host: 10.2.26.11
+      license_file: inputs/registration/ZZ0001HM.oreg
+      hostname: lustre-stennis-oss1
+      first_ha_node: true
+      ha_peer_ipaddr: 10.2.26.12
+      admin_iface: ens259f0
+      hb_iface: ens259f1
+      hb_iface_ipaddr: 192.255.0.1/24
+      ipmi_ip_address: 10.2.11.9/24
+      configure_ipmi: false
+      ib_addrs:
+        ib0: 192.168.100.11/24
+        ib1: null
+
+    ossnode2:
+      ansible_host: 10.2.26.12
+      license_file: inputs/registration/ZZ0001HN.oreg
+      hostname: lustre-stennis-oss2
+      first_ha_node: false
+      ha_peer_ipaddr: 10.2.26.11
+      admin_iface: ens259f0
+      hb_iface: ens259f1
+      hb_iface_ipaddr: 192.255.0.2/24
+      ipmi_ip_address: 10.2.11.13/24
+      configure_ipmi: false
+      ib_addrs:
+        ib0: 192.168.100.12/24
+        ib1: null
+  vars:
+    witness_instance: 0 # hiavd 4746, confd 2379/2380
+    zpools:
+      - TODO_oss_pool # TODO: OSS ZFS pool name(s)
+
+mds:
+  hosts:
+    mdsnode1:
+      ansible_host: 10.2.26.13
+      license_file: inputs/registration/ZZ0001HO.oreg
+      hostname: lustre-stennis-mgs1
+      first_ha_node: true
+      ha_peer_ipaddr: 10.2.26.14
+      admin_iface: ens259f0
+      hb_iface: ens259f1
+      hb_iface_ipaddr: 192.255.0.1/24
+      ipmi_ip_address: 10.2.11.14/24
+      configure_ipmi: false
+      ib_addrs:
+        ib0: 192.168.100.13/24
+        ib1: null
+
+    mdsnode2:
+      ansible_host: 10.2.26.14
+      license_file: inputs/registration/ZZ0001HP.oreg
+      hostname: lustre-stennis-mgs2
+      first_ha_node: false
+      ha_peer_ipaddr: 10.2.26.13
+      admin_iface: ens259f0
+      hb_iface: ens259f1
+      hb_iface_ipaddr: 192.255.0.2/24
+      ipmi_ip_address: 10.2.11.15/24
+      configure_ipmi: false
+      ib_addrs:
+        ib0: 192.168.100.14/24
+        ib1: null
+  vars:
+    witness_instance: 1 # hiavd 4747, confd 2381/2382
+    zpools:
+      - TODO_mds_pool # TODO: MDS/MGS ZFS pool name(s)
+
+ost:
+  children:
+    oss:
+mdt:
+  children:
+    mds:
+
+# TODO: confirm lustre-stennis-witness1 (10.2.26.15) is the HA witness for
+# both pairs.
+cluster_witness:
+  hosts:
+    witness-oss:
+      ansible_host: 10.2.26.15
+      hostname: lustre-stennis-witness1
+      role: oss
+      witness_instance: 0
+    witness-mds:
+      ansible_host: 10.2.26.15
+      hostname: lustre-stennis-witness1
+      role: mds
+      witness_instance: 1
+
+lustre_nodes:
+  children:
+    oss:
+    mds:
+    cluster_witness:

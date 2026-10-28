@@ -13,11 +13,6 @@
     name: hiavd
     state: restarted
 
-- name: Restart network
-  ansible.builtin.service:
-    name: NetworkManager
-    state: restarted
-
 - name: Restart NTP
   ansible.builtin.service:
     name: chronyd
@@ -27,13 +22,6 @@
   ansible.builtin.file:
     state: absent
     path: "{{ ipmi_setup_script_path }}"
-
-- name: Reload udev rules
-  ansible.builtin.command:
-    cmd: "{{ item }}"
-  with_items:
-    - udevadm control --reload-rules
-    - udevadm trigger --subsystem-match=net --action=add
 
 - name: Remove temporary SSH key
   ansible.builtin.file:

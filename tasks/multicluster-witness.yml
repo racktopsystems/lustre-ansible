@@ -1,94 +1,56 @@
 ---
-# We remove the default systemd service because it is designed for a
-# single-tenant configuration and we must configure confd for multi-tenancy.
-# Perform this removal only once. Thus
-- name: Remove witness HA services installed by the witness package
-  vars:
-    systemd_etc_dir: /etc/systemd/system
-    systemd_etc_mut_wants_dir: "{{ systemd_etc_dir }}/multi-user.target.wants"
-
+# Configure the confd and hiavd service instances that serve one HA cluster on
+# the witness. The ha-witness RPM ships both the default services (instance 0:
+# confd.service, hiavd.service) and instance templates (confd@.service,
+# hiavd@.service). See the multi-cluster witness section of group_vars/all for
+# how instance numbers map to ports and file locations.
+- name: Configure witness instance {{ witness_instance_id }} for the {{ role }} cluster
   block:
-    # We create service files for confd and hiavd. These are instance-specific
-    # files. With the ha-witness RPM package we do get a service file for both,
-    # but because we need this configuration to be multi-tenant we are going to
-    # ignore and in fact disable the services which come with bundled with the
-    # RPM and create our own with instance awareness.
-    - name: Create instance-specific systemd service files
-      vars:
-        description: "{{ item.desc }}"
-        service: "{{ item.name }}"
-      ansible.builtin.template:
-        src: "{{ item.src }}"
-        dest: "{{ item.dest }}"
-      with_items:
-        - {
-            "name": "confd",
-            "src": "templates/{{ systemd_etc_dir[1:] }}/confd_hiavd.service.j2",
-            "dest": "{{ systemd_etc_dir }}/confd-{{ instance }}.service",
-            "desc": "RackTop Configuration Database",
-          }
-        - {
-            "name": "hiavd",
-            "src": "templates/{{ systemd_etc_dir[1:] }}/confd_hiavd.service.j2",
-            "dest": "{{ systemd_etc_dir }}/hiavd-{{ instance }}.service",
-            "desc": "BrickStor High Availability Service",
-          }
+    - name: Verify witness instance matches the {{ role }} HA pair
+      ansible.builtin.assert:
+        that:
+          - (hostvars[groups[role][0]].witness_instance | default(0) | int) == (witness_instance_id | int)
+          - (hostvars[groups[role][1]].witness_instance | default(0) | int) == (witness_instance_id | int)
+        fail_msg: >-
+          witness_instance for {{ inventory_hostname }} ({{ witness_instance_id }})
+          must match witness_instance of the {{ role }} group in the inventory.
+        quiet: true
 
-    # This is a rough equivalent of enabling services with systemd, which
-    # permits them to start automatically on system boot.
-    - name: Link the multi-instance HA service files into {{ systemd_etc_mut_wants_dir }}
+    # Earlier revisions of this playbook installed custom units named
+    # confd-<name>.service and hiavd-<name>.service and disabled the default
+    # services. Those units never worked because -instance takes an integer.
+    - name: Remove legacy custom witness units
       ansible.builtin.file:
-        src: "{{ item.src }}"
-        dest: "{{ item.dest }}"
-        state: link
-      with_items:
-        - {
-            "src": "{{ systemd_etc_dir }}/confd-{{ instance }}.service",
-            "dest": "{{ systemd_etc_mut_wants_dir }}/confd-{{ instance }}.service",
-          }
-        - {
-            "src": "{{ systemd_etc_dir }}/hiavd-{{ instance }}.service",
-            "dest": "{{ systemd_etc_mut_wants_dir }}/hiavd-{{ instance }}.service",
-          }
-      register: witness_service_symlink_result
-
-    - name: Stop default instance of witness HA services if running
-      ansible.builtin.systemd:
-        name: "{{ item }}"
-        state: stopped
-        enabled: no
-      with_items:
-        - confd
-        - hiavd
-      ignore_errors: true
-      register: default_witness_service_stop_result
-
-    - name: Remove witness HA service unit files if necessary
-      ansible.builtin.file:
-        path: "{{systemd_etc_mut_wants_dir }}/{{ item }}.service"
+        path: "/etc/systemd/system/{{ item.0 }}{{ item.1 }}-{{ role }}.service"
         state: absent
-      with_items:
-        - confd
-        - hiavd
-      register: default_witness_service_unit_file_removal_result
+      loop: "{{ ['', 'multi-user.target.wants/'] | product(['confd', 'hiavd']) | list }}"
+      register: legacy_witness_units_result
 
-    - name: Reload systemd daemon to forget the units if necessary
-      ansible.builtin.systemd:
-        daemon_reload: yes
-      when:
-        - default_witness_service_unit_file_removal_result.results | selectattr('changed', 'equalto', true) | list | length > 0
+    - name: Reload systemd after removing legacy units
+      ansible.builtin.systemd_service:
+        daemon_reload: true
+      when: legacy_witness_units_result is changed
 
-    - name: DEBUG existence of systemd unit files
-      debug:
-        msg: "{{ default_witness_service_unit_file_removal_result }}"
+    - name: Gather service facts
+      ansible.builtin.service_facts:
 
-    # We make sure that each instance of the witness HA services is enabled and
-    # started.
-    - name: Enable multi-instance witness HA services
-      ansible.builtin.systemd:
+    - name: Open witness instance ports in firewalld
+      ansible.posix.firewalld:
+        port: "{{ item }}/tcp"
+        permanent: true
+        immediate: true
+        state: enabled
+      loop:
+        - "{{ ha_comms_port }}"
+        - "{{ confd_client_port }}"
+        - "{{ confd_peer_port }}"
+      when: ansible_facts.services.get('firewalld.service', {}).get('state') == 'running'
+
+    - name: Enable and start {{ confd_service }} and {{ hiavd_service }}
+      ansible.builtin.systemd_service:
         name: "{{ item }}"
         enabled: true
         state: started
-      with_items:
-        - "confd-{{ instance }}"
-        - "hiavd-{{ instance }}"
+      loop:
+        - "{{ confd_service }}"
+        - "{{ hiavd_service }}"

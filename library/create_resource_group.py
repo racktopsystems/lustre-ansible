@@ -233,6 +233,11 @@ def run_module():
             msg="pool already in a resource group", poolname=poolname, changed=False
         )
 
+    if module.check_mode:
+        module.exit_json(
+            msg="resource group would be created", poolname=poolname, changed=True
+        )
+
     missing_pools = {}
     local_hw_refresh_errors, remote_hw_refresh_errors = [], []
 

@@ -80,10 +80,13 @@ def statefile_missing_or_initial(statefile: str) -> bool:
 
 def no_cluster_nodes_defined(configfile: str):
     """Returns True if there are no nodes defined in the cluster."""
-    with open(configfile, "rb") as f:
-        for line in f.readlines():
-            if line.startswith(b"[[ClusterNodes]]"):
-                return False
+    try:
+        with open(configfile, "rb") as f:
+            for line in f.readlines():
+                if line.startswith(b"[[ClusterNodes]]"):
+                    return False
+    except FileNotFoundError:
+        pass
     return True
 
 
@@ -94,6 +97,7 @@ def main():
             statefile_path=dict(type="str", required=False),
             revision_id=dict(type="int", required=False),
         ),
+        supports_check_mode=True,
     )
 
     configfile = module.params["config_path"]

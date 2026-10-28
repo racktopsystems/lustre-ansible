@@ -6,7 +6,6 @@ At this moment we can only support a single pool, because we use the name of the
 ## Capabilities
 ### Out of scope
 Once this project is fully implemented we expect certain functions to remain out of scope. The following things are going to remain out of scope for the foreseable future:
-- Placement of SSH keys on the Lustre nodes
 - Configuration of the "primary" network interface. Without this interface we cannot connect to the system in the first place, thus it is assumed to be managed outside of Ansible
 - Configuration of storage all enclosures, which should only ever happen once
 - Creation of ZFS pools which should only ever happen once
@@ -18,7 +17,7 @@ Once this project is fully implemented we expect certain functions to remain out
 - Basic network configuration beyond the "primary" interface, such as the heartbeat, infiniband, etc.
 - Common system settings such as DNS, NTP, SELinux
 - High availability and associated resource groups
-- Lnet setup (Lustre networking)
+- Lnet setup (Lustre networking), via `lustreadm lnet` on the InfiniBand interfaces in `ib_addrs`
 - Lustre storage configuration
 
 ## Repository organization
@@ -67,6 +66,11 @@ To customize Ansible make changes to the `ansible.cfg` file in the repository. T
 #### Credentials
 Ansible connects to remote systems over SSH and normally assumes key-based authentication. It is assumed that keys have already been setup on all remote systems for whichever user is going to be used to connect to them. It is also assumed that this user will have ability to execute tasks via `sudo`. Most tasks do require super-user privileges and will fail unless the given user can `sudo` and assume `root`'s role.
 
+To bootstrap key-based authentication on freshly installed nodes, run the `bootstrap-keys.yml` playbook once. It generates a dedicated RSA 4096 key pair at `sensitive/ansible_id_rsa` on the control node (if not already present), logs in to every `lustre_nodes` host as `bsradmin` using the factory default password, installs the public key, and verifies key-based login. `ansible.cfg` points `private_key_file` at this key, so all subsequent runs use it. Password-based SSH requires `sshpass` on the control node. Use `-e bootstrap_user=<user>` to target a different remote account.
+```bash
+$ ansible-playbook -i inventory.yaml bootstrap-keys.yml
+```
+
 It is rather inconvenient to type in the password each time, which is required when `sudo` requires user to enter the password. Create a password file at the root of this checked out repository to avoid interactive prompting. _Please_ do not check this file into `git`. You may call it anything, but during development we called it `bsradminpass`. The password must be in plain text, thus make sure this file is not wide open. Set very restrictive permissions to limit access.
 
 #### IPMI Credentials
@@ -77,16 +81,32 @@ ipmi_password: <password>
 ```
 
 ## Configuration
-Once the environment is setup and you are ready to run the automation it is necessary to properly configure various settings specific to this environment. Two files govern these settings: `inventory.yml` and `group_vars/lustre_nodes`. As this project matures we may find need for multiple groups and thus variable files for each such group. At this time only one group is actively used: `lustre_nodes`.
+Once the environment is setup and you are ready to run the automation it is necessary to properly configure various settings specific to this environment. Two files govern these settings: `inventory.yaml` and `group_vars/lustre_nodes`. As this project matures we may find need for multiple groups and thus variable files for each such group. At this time only one group is actively used: `lustre_nodes`.
 
 ### Inventory file
-We placed an example inventory file in the root of this repository. Ansible supports a number of styles (formats) for the inventory file. We chose YAML for its flexibility and inherently hierarchical nature. The inventory file is reasonably well commented to make it easier to get started. Please, rename the inventory file `inventory.yml.example` to `inventory.yml` and fill it out according to the specifics in the environment.
+We placed an example inventory file in the root of this repository. Ansible supports a number of styles (formats) for the inventory file. We chose YAML for its flexibility and inherently hierarchical nature. The inventory file is reasonably well commented to make it easier to get started. Please, copy `inventory.yaml.example` to `inventory.yaml` and fill it out according to the specifics in the environment.
 
 ### Organization of the inventory file
 The top-most level in this file is a hash containing group names, each of which is itself a hash with a single key called `hosts`. Items in this hash are the hosts belonging to this group. Each group can also have variables assigned to it in the inventory file called _group variables_.
 
 #### Hosts
-Each host may be specified by an IP address, a DNS name or a name from the local hosts file, as well as long as they are resolvable. All hosts in the `mdt` and `ost` groups will have several variables. These variables, expressed as elements in a hash (key/value pairs) are applicable to _that host only_. In other words, their scope is limited to this one host and each host must have these variables defined. Ansible will fail if only _some_ of the hosts in the inventory have these variables if these variables are referenced anywhere in the playbooks. In the case of the `ib_addrs` hash we have two keys, `ib0` and `ib1`. If only one of two interfaces is expected to be used, make sure that the unused interface has `null` as its value. This will ensure that this interface is ignored when configuration is applied to the remote system.
+The HA tasks look hosts up by fixed inventory names, so the Lustre servers must be named `ossnode1`, `ossnode2`, `mdsnode1` and `mdsnode2`. The real address of each host is supplied with `ansible_host`. The groups are:
+
+- `oss` and `mds`: the two HA pairs. Each group sets `witness_instance` (see below) and may define a `zpools` list of the ZFS pools managed by that pair.
+- `ost` and `mdt`: used by the Lustre storage tasks. They contain the `oss` and `mds` groups respectively.
+- `cluster_witness`: the HA witness. One host can witness both pairs by listing it once per pair under different inventory names with the same `ansible_host`. Each entry sets `role` (`oss` or `mds`) and `witness_instance`, which must match the value on that pair's group.
+- `lustre_nodes`: everything the playbooks configure (`oss`, `mds` and `cluster_witness`). The witness must be included so its facts are available when the HA peers are configured.
+
+`witness_instance` selects the confd/hiavd service instance on the witness that serves a pair. The ha-witness RPM provides these instances:
+
+| `witness_instance` | Witness services | hiavd config directory | hiavd port | confd ports |
+|---|---|---|---|---|
+| 0 | `confd`, `hiavd` | `/etc/racktop/hiavd/` | 4746 | 2379, 2380 |
+| 1 | `confd@1`, `hiavd@1` | `/etc/racktop/hiavd_1/` | 4747 | 2381, 2382 |
+
+The HA nodes always run the default services. Their hiavd uses the same port as their witness instance, so the nodes of a pair served by instance 1 also listen on 4747. When firewalld is running, the playbook opens these ports.
+
+Every server in `oss` and `mds` must define `hostname`, `first_ha_node` (true on exactly one node of each pair), `ha_peer_ipaddr` (address of the peer), `admin_iface` (management interface, the only one confd uses for peer traffic), `hb_iface` (physical heartbeat link, excluded from confd client URLs; its NetworkManager connection is renamed to `hb0`), `hb_iface_ipaddr` (heartbeat address), `ipmi_ip_address`, `configure_ipmi`, `ib_addrs` and `license_file` (path to the system's `.oreg` license). Ansible will fail if only _some_ of the hosts define a variable that the playbooks reference. Interface addresses (`hb_iface_ipaddr` and the `ib_addrs` values) must be IPv4 CIDR, e.g. `192.255.0.1/24`; the playbooks fail otherwise. In the `ib_addrs` hash there are two keys, `ib0` and `ib1`. If only one interface is used, set the unused one to `null` so it is ignored.
 
 #### Variables
 To create variables applicable only to this group create another key at the same level of the hierarchy as `hosts` named `vars`. See example below where we create a variable called `widget_count`. Each group can have the same variables but with different values, which allows for a level of customization in playbooks based on the system's or group's role or purpose.
@@ -104,16 +124,18 @@ In addition to the inventory file which contains _all_ remote systems that Ansib
 
 ## Running the playbook
 ### Runtime dependencies
-#### Offline Registration
-Among other things, one of the steps is registration of the systems. In order for registration to happen, because these systems have no access to the Internet, offline registration files must be provided. RackTop is expected to supply offline registration files for each system. All registration files must be renamed such that the filename matches the hostname specified in the inventory file plus the `.oreg` extension. These files must reside in the `inputs/registration` directory. Thus, if a hostname assigned to a system is `system01`, the filename will be `system01.oreg` and the path relative to the root of this repository is `inputs/registration/system01.oreg`.
+#### Licensing and registration
+Each HA node needs its own BrickStor license, a system-specific `.oreg` file supplied by RackTop. Set the host's `license_file` inventory variable to that file, either absolute or relative to the root of this repository (for example `inputs/registration/ossnode1.oreg`). Registration is the first thing the playbook does: on hosts that are not yet registered it copies the file over and applies it with `licadm register --file <file> --eula-signer <license_eula_signer>`, then restarts the platform services.
 
-Because there's not a straight-forward command-line oriented method for obtaining the registration code on 23.6, which RackTop needs in order to properly register the system and generate an offline registration file, a convenience script has been created. To obtain the registration code use the `get-reg-code.sh` script in the `scripts/` directory in this repository. The script must be copied to each machine which requires registration. Ensure the script is executable and export the `USERNAME` and `PASSWORD` environment variables which this script requires in order to obtain the registration information. Normally, this will either be the `bsradmin` or the `root` user.
+To obtain the offline registration key RackTop needs to generate a system's `.oreg` file, run `sudo /usr/racktop/sbin/licadm register` on that system without `--file`.
 
 As previously mentioned, the `global-playbook.yml` is the primary playbook which aggregates tasks and handlers from several files. This is the playbook which must be executed.
-The following command assumes that the user executing tasks on the remote systems is called `bsradmin`, the password lives in the `bsradminpass` and inventory is in the `inventory.yml` file.
+The following command assumes that the user executing tasks on the remote systems is called `bsradmin`, the password lives in the `bsradminpass` and inventory is in the `inventory.yaml` file.
 ```bash
 $ ansible-playbook -u bsradmin --become-password-file bsradminpass -v -i inventory.yaml global-playbook.yml
 ```
+
+Registration runs by default. To skip it, for example while the `.oreg` files are not yet available, add `-e perform_registration=false`.
 
 ## Development
 The repository is organized in a modular fashion to ease development. We should aim for tasks files which are relatively standalone and complete a single objective. It may make sense to have files which combine objectives when those objectives are related and the file isn't so long that developing and debugging it is becoming a burden. It may make sense to have variables in the global playbook, but you are more likely to benefit from variables defined in individual task blocks. There are examples of this in the repo. It makes sense to do this when the variable is only used in one place, or perhaps in a handful of tasks, in which case it has to be defined in each task, since the scope of the variable does not extend beyond the scope of the given task.

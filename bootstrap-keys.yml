@@ -1,0 +1,94 @@
+---
+# One-time bootstrap: generate a dedicated Ansible SSH key pair on the control
+# node and install its public key on every Lustre node using the factory
+# default password. Afterwards, ansible.cfg points at the private key so all
+# other playbooks authenticate with it.
+#
+# Uses only ansible.builtin modules, so plain ansible-core is sufficient.
+#
+# Usage (requires sshpass on the control node):
+#   ansible-playbook -i inventory.yaml bootstrap-keys.yml
+#
+# Override the remote account with: -e bootstrap_user=<user>
+
+- name: Generate Ansible SSH key pair on the control node
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  become: false
+
+  vars:
+    ansible_key_dir: "{{ playbook_dir }}/sensitive"
+    ansible_key_path: "{{ ansible_key_dir }}/ansible_id_rsa"
+
+  tasks:
+    - name: Ensure key directory exists
+      ansible.builtin.file:
+        path: "{{ ansible_key_dir }}"
+        state: directory
+        mode: "0700"
+
+    - name: Generate RSA 4096 key pair
+      ansible.builtin.command:
+        argv:
+          - ssh-keygen
+          - -q
+          - -t
+          - rsa
+          - -b
+          - "4096"
+          - -N
+          - ""
+          - -C
+          - lustre-ansible
+          - -f
+          - "{{ ansible_key_path }}"
+        creates: "{{ ansible_key_path }}"
+
+- name: Install Ansible public key on Lustre nodes
+  hosts: lustre_nodes
+  gather_facts: false
+  become: false
+
+  vars:
+    bootstrap_user: bsradmin
+    ansible_user: "{{ bootstrap_user }}"
+    ansible_password: racktop1
+    # Force password auth so agent keys don't trigger "Too many authentication
+    # failures", and accept host keys on first contact only.
+    ansible_ssh_common_args: >-
+      -o PreferredAuthentications=password,keyboard-interactive
+      -o PubkeyAuthentication=no
+      -o StrictHostKeyChecking=accept-new
+    ansible_key_path: "{{ playbook_dir }}/sensitive/ansible_id_rsa"
+
+  tasks:
+    - name: Ensure ~/.ssh exists
+      ansible.builtin.file:
+        path: "~/.ssh"
+        state: directory
+        mode: "0700"
+
+    - name: Add Ansible public key to authorized_keys
+      ansible.builtin.lineinfile:
+        path: "~/.ssh/authorized_keys"
+        line: "{{ lookup('ansible.builtin.file', ansible_key_path ~ '.pub') }}"
+        create: true
+        mode: "0600"
+
+- name: Verify key-based login
+  hosts: lustre_nodes
+  gather_facts: false
+  become: false
+
+  vars:
+    bootstrap_user: bsradmin
+    ansible_user: "{{ bootstrap_user }}"
+    ansible_ssh_private_key_file: "{{ playbook_dir }}/sensitive/ansible_id_rsa"
+    ansible_ssh_common_args: >-
+      -o PreferredAuthentications=publickey
+      -o IdentitiesOnly=yes
+
+  tasks:
+    - name: Connect using the Ansible key
+      ansible.builtin.ping:

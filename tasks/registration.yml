@@ -1,83 +1,63 @@
 ---
-- name: Gather custom registration facts for non-witness members
+# Registers the system and installs its BrickStor licenses from the
+# system-specific .oreg file named by the host's `license_file` inventory
+# variable. Relative paths are resolved against the repository root.
+- name: Validate license_file
+  ansible.builtin.assert:
+    that:
+      - license_file is defined
+      - license_file is string
+      - license_file is match('.*\.oreg$')
+    fail_msg: "license_file must name this system's .oreg file (got '{{ license_file | default('undefined') }}')"
+    quiet: true
+
+- name: Gather custom registration facts
   registration_facts:
 
-- name: Set fact with {{ offline_reg_user }} password information
-  vars:
-    randpass: "{{ lookup('password', '/dev/null chars=ascii_letters,digit length=12', seed=now(utc=true,fmt='%s')) }}"
-  ansible.builtin.set_fact:
-    offline_reg_password_hash:
-      cleartext: "{{ randpass }}"
-      hash: "{{ randpass | password_hash }}"
+- name: Register system and install licenses
   when: not system_is_registered
-  no_log: "{{ hide_sensitive_output }}"
+  block:
+    - name: Transfer {{ license_file | basename }} to the system
+      ansible.builtin.copy:
+        src: "{{ license_file if license_file is abs else playbook_dir ~ '/' ~ license_file }}"
+        dest: "{{ license_remote_file }}"
+        owner: root
+        group: root
+        mode: "0600"
 
-# This creates the user with which we _locally_ authenticate with bsrapid and
-# complete system registration.
-- name: Create temporary {{ offline_reg_user }} user for authentication with the API
-  ansible.builtin.user:
-    append: true
-    create_home: false
-    groups: bsradmins
-    name: "{{ offline_reg_user }}"
-    password: "{{ offline_reg_password_hash['hash'] }}"
-    state: present
-  when: not system_is_registered
+    # --json keeps licadm non-interactive (no EULA pager or prompts) and
+    # reports failures as JSON.
+    - name: Apply {{ license_file | basename }} with licadm
+      ansible.builtin.command:
+        argv:
+          - "{{ licadm_bin }}"
+          - --json
+          - register
+          - --file
+          - "{{ license_remote_file }}"
+          - --eula-signer
+          - "{{ license_eula_signer }}"
+      register: license_register_result
 
-- name: Transfer the offline registration file to the system
-  ansible.builtin.copy:
-    src: inputs/registration/{{ hostname }}.oreg
-    dest: "{{ offline_reg_filename }}"
-  when: not system_is_registered
+    - name: Restart platform services to pick up the registration
+      ansible.builtin.systemd_service:
+        name: "{{ item }}"
+        state: restarted
+      loop:
+        - bsrapid
+        - bsrbootstrapd
+        - bsrlicensed
+        - bsrzfsd
+        - confd
+        - healthd
+        - hiavd
+        - hwd
+        - secured
+        - zcached
+      when: license_register_result is changed
 
-- name: Extract the offline registration archive
-  decode_unzip:
-    src: "{{ offline_reg_filename }}"
-    dest: "{{ offline_reg_filename }}-extracted"
-    creates: "{{ offline_reg_filename }}-extracted/licenses.txt"
-  when: not system_is_registered
-
-- name: Perform offline registration and install license keys
-  # We store all the necessary details in the environment. The script looks
-  # these variables up and passes them through via cURL commands to
-  # bsrapid.
-  environment:
-    USER: "{{ offline_reg_user }}"
-    PASSWORD: "{{ offline_reg_password_hash['cleartext'] }}"
-    OREG_FILENAME: "{{ offline_reg_filename }}"
-    OREG_LIC_KEYS_FILENAME: "{{ offline_reg_filename }}-extracted/licenses.txt"
-    EULA_ACCEPT_NAME: "{{ offline_reg_eula_name }}"
-  ansible.builtin.script:
-    executable: /usr/bin/bash # Required due to the 'noexec' setting on /home
-    cmd: scripts/register.sh
-  when: not system_is_registered
-  register: offline_reg_result
-
-- name: Remove temporary user with which offline registration was performed
-  ansible.builtin.user:
-    name: "{{ offline_reg_user }}"
-    state: absent
-  when: not system_is_registered
-
-- name: Restart platform services
-  vars:
-    services_restart_required: |
-      {{ offline_reg_result.changed | default(false) }}
-  ansible.builtin.systemd_service:
-    name: "{{ item }}"
-    state: restarted
-  with_items:
-    - bsrapid
-    - bsrbootstrapd
-    - bsrlicensed
-    - bsrzfsd
-    - confd
-    - healthd
-    - hiavd
-    - hwd
-    # - keymgrd
-    - secured
-    # - webhookd
-    - zcached
-  when:
-    - services_restart_required
+  always:
+    - name: Remove {{ license_remote_file }}
+      ansible.builtin.file:
+        path: "{{ license_remote_file }}"
+        state: absent

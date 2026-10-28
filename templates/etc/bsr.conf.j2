@@ -12,8 +12,8 @@ Domain = ""
 DisableMyrack = true
 HARole = "Node"
 HANodeId = "{{ ansible_product_uuid }}"
-HANodeAddr = "{{ hb_iface_ipaddr }}"
+HANodeAddr = "{{ hb_iface_address }}"
 
 [[HARemoteNodes]]
   HANodeId = "{{ hostvars[peer_inventory_name].ansible_product_uuid }}"
-  HANodeAddr = "{{ hostvars[peer_inventory_name].hb_iface_ipaddr }}"
+  HANodeAddr = "{{ hostvars[peer_inventory_name].hb_iface_address }}"

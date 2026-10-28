@@ -1,85 +1,75 @@
 ---
-- name: Setup HA heartbeat ({{ hb_iface_desired_name }}) interface
-  vars:
-    # Boolean value indicating whether 'ansible_<hb_iface_desired_name>' key is
-    # present in the host's inventory. If present, it means the rule must
-    # already be in place, thus don't try to create it, because it is going to
-    # fail, due to the interface having been renamed already to our desired
-    # heartbeat interface name.
-    hb_iface_in_inventory: "{{ 'ansible_' + hb_iface_desired_name in hostvars[inventory_hostname] }}"
-    kernel_iface_name: '{{ vm_os_assigned_hb_iface_name if ansible_virtualization_role == "guest" else phys_os_assigned_hb_iface_name }}'
-    mac_address: '{{hostvars[inventory_hostname]["ansible_" + kernel_iface_name].macaddress}}'
-    final_iface_name: "{{ hb_iface_desired_name }}"
-
+# The heartbeat link is the physical interface named by `hb_iface`. It is
+# carried by a NetworkManager connection named `hb_conn_name` (hb0). An existing
+# connection for that interface is renamed to hb0 rather than duplicated.
+- name: Setup HA heartbeat ({{ hb_conn_name }}) connection on {{ hb_iface | default('undefined') }}
   block:
-    # If the network configuration file for the hb0 interface already exists,
-    # we are just going to make sure that it is correct. We do this by reading
-    # in the file and extracting bits we care about, the UUID namely and then
-    # we generate a new file with settings we expect, injecting bits we read in
-    # previously. Otherwise we just create a new file and generate bits like
-    # the UUID.
-    - name: Make sure that the {{ hb_iface_desired_name }} interface file exists
-      ansible.builtin.stat:
-        path: "{{ netconfig_dir }}/ifcfg-{{ hb_iface_desired_name }}"
-      register: hb_conf_file_result
+    - name: Validate heartbeat interface variables
+      ansible.builtin.assert:
+        that:
+          - hb_iface is defined
+          - hb_iface in ansible_interfaces
+          - hb_iface_ipaddr is defined
+          - hb_iface_ipaddr is ipv4_cidr
+        fail_msg: >-
+          hb_iface ({{ hb_iface | default('undefined') }}) must name an existing
+          interface ({{ ansible_interfaces | sort | join(', ') }}) and
+          hb_iface_ipaddr ({{ hb_iface_ipaddr | default('undefined') }}) must be
+          an IPv4 address in CIDR form (e.g. 192.255.0.1/24).
+        quiet: true
 
-    - name: Read in contents of the {{hb_iface_desired_name}} interface file
-      ansible.builtin.slurp:
-        src: "{{ netconfig_dir }}/ifcfg-{{ hb_iface_desired_name }}"
-      register: reg_iface_file
-      when: hb_conf_file_result.stat.exists
+    - name: List NetworkManager connections
+      ansible.builtin.shell: |
+        set -eu
+        active=$(nmcli -g GENERAL.CON-UUID device show {{ hb_iface | quote }} 2>/dev/null || true)
+        for u in $(nmcli -g UUID connection show); do
+          id=$(nmcli -g connection.id connection show uuid "$u")
+          ifn=$(nmcli -g connection.interface-name connection show uuid "$u")
+          [ "$u" = "$active" ] && act=1 || act=0
+          printf '%s\t%s\t%s\t%s\n' "$u" "$act" "$ifn" "$id"
+        done
+      register: hb_nm_conns
+      changed_when: false
+      check_mode: false
 
-    - name: Convert {{ hb_iface_desired_name }} interface file into a dict
+    - name: Select the connection to use as {{ hb_conn_name }}
       vars:
-        text: "{{reg_iface_file.content | b64decode | trim }}"
-        # This is absolutely horrible, and we should find a better way.
-        pairs: "[{% for line in text.split('\n') %}{{line.split('=')}},{% endfor %}]"
-      set_fact:
-        cf_iface_file: "{{ dict(pairs) }}"
-      when: hb_conf_file_result.stat.exists
+        conns: "{% set ns = namespace(l=[]) %}{% for l in hb_nm_conns.stdout_lines %}{% set f = l.split('\t', 3) %}{% set ns.l = ns.l + [{'uuid': f[0], 'active': f[1] == '1', 'ifname': f[2], 'id': f[3]}] %}{% endfor %}{{ ns.l }}"
+        named: "{{ conns | selectattr('id', 'equalto', hb_conn_name) | list }}"
+        on_dev_active: "{{ conns | selectattr('active') | list }}"
+        on_dev_bound: "{{ conns | selectattr('ifname', 'equalto', hb_iface) | list }}"
+      ansible.builtin.set_fact:
+        hb_conn_dup_count: "{{ named | length }}"
+        hb_conn_current: "{{ (named + on_dev_active + on_dev_bound + [{}]) | first }}"
 
-    - name: Create facts for {{ hb_iface_desired_name }} interface file
-      vars:
-        uuid: "{{ ansible_product_uuid | to_uuid }}"
-      set_fact:
-        cf_iface_file: "{{ dict(UUID=uuid) }}"
-      when: not hb_conf_file_result.stat.exists
+    - name: Ensure only one connection is named {{ hb_conn_name }}
+      ansible.builtin.assert:
+        that: hb_conn_dup_count | int <= 1
+        fail_msg: "Multiple NetworkManager connections are named {{ hb_conn_name }}; remove the extras."
+        quiet: true
 
-    - name: Create new interface file for the {{ hb_iface_desired_name }} heartbeat network interface
-      ansible.builtin.copy:
-        dest: "{{ netconfig_dir }}/ifcfg-{{ hb_iface_desired_name }}"
-        content: |
-          TYPE=Ethernet
-          PROXY_METHOD=none
-          BROWSER_ONLY=no
-          BOOTPROTO=none
-          DEFROUTE=yes
-          IPV4_FAILURE_FATAL=no
-          IPV6INIT=yes
-          IPV6_AUTOCONF=yes
-          IPV6_DEFROUTE=yes
-          IPV6_FAILURE_FATAL=no
-          IPV6_ADDR_GEN_MODE=default
-          NAME={{ hb_iface_desired_name }}
-          UUID={{ cf_iface_file['UUID'] }}
-          DEVICE={{ hb_iface_desired_name }}
-          ONBOOT=yes
-          IPADDR={{ hb_iface_ipaddr }}
-          PREFIX={{ hb_iface_prefix }}
-
-    - name: Create necessary {{ hb_iface_desired_name }} persistent interface naming rules
-      lineinfile:
-        path: "{{ net_persistent_rules_file }}"
-        create: yes
-        line: |
-          SUBSYSTEM=="net", ACTION=="add", ATTR{address}=="{{ mac_address }}", ATTR{type}=="1", NAME="{{ final_iface_name }}"
-        regexp: 'ATTR{address}=="{{ mac_address }}".*NAME="{{ final_iface_name }}"'
-      # Only perform this task if the kernel-assigned interface name is still
-      # present. Once the interface has been renamed and new name is in the
-      # inventory the task is going to fail because the required lookup is going
-      # to fail.
+    - name: Rename connection '{{ hb_conn_current.id | default('') }}' to {{ hb_conn_name }}
+      ansible.builtin.command:
+        argv: [nmcli, connection, modify, uuid, "{{ hb_conn_current.uuid }}", connection.id, "{{ hb_conn_name }}"]
+      register: hb_conn_rename
       when:
-        - not hb_iface_in_inventory
-      notify: Reload udev rules
+        - hb_conn_current.uuid is defined
+        - hb_conn_current.id != hb_conn_name
 
-  notify: Restart network
+    - name: Configure {{ hb_conn_name }} on {{ hb_iface }} with {{ hb_iface_ipaddr }}
+      community.general.nmcli:
+        conn_name: "{{ hb_conn_name }}"
+        ifname: "{{ hb_iface }}"
+        type: ethernet
+        method4: manual
+        ip4: "{{ hb_iface_ipaddr }}"
+        autoconnect: true
+        state: present
+      register: hb_conn_config
+
+    - name: Activate {{ hb_conn_name }}
+      ansible.builtin.command:
+        argv: [nmcli, connection, up, id, "{{ hb_conn_name }}"]
+      when: >-
+        (hb_conn_rename is changed) or (hb_conn_config is changed) or
+        not (hb_conn_current.active | default(false))

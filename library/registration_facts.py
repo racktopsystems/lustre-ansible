@@ -36,7 +36,7 @@ def main():
     try:
         # Run the command
         res = subprocess.check_output(
-            "bsradm -j per view".split(),
+            ["/usr/racktop/sbin/bsradm", "-j", "per", "view"],
             # Send STDERR to STDOUT to handle the system unregistered case.
             # In this case the JSON object with an error and lack of
             # registration indication is written to STDERR instead of STDOUT.

@@ -18,6 +18,7 @@ def main():
         argument_spec=dict(
             procfs_path=dict(type="str", required=False),
         ),
+        supports_check_mode=True,
     )
 
     procfs_path = module.params["procfs_path"]

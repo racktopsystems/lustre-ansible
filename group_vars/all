@@ -2,14 +2,18 @@
 any_errors_fatal: "{{ fastfail | default(false) }}"
 
 # All other common variables.
-vm_os_assigned_hb_iface_name: "ens224"
-phys_os_assigned_hb_iface_name: "ens259f1"
-default_iface_desired_name: "admin0"
-hb_iface_desired_name: "hb0"
-hb_iface_prefix: 24 # This mask is never expected to change.
-netconfig_dir: /etc/sysconfig/network-scripts
-net_persistent_rules_file: /etc/udev/rules.d/70-persistent-net.rules
-net_admin_link_file: /etc/systemd/network/10-admin0.link
+# NetworkManager connection carrying the heartbeat link on `hb_iface`.
+hb_conn_name: "hb0"
+# Interface addresses (`hb_iface_ipaddr`, `ib_addrs`) are CIDR, e.g. 10.0.0.5/24.
+# This is the bare heartbeat address for configs that take no prefix.
+hb_iface_address: "{{ hb_iface_ipaddr.split('/') | first }}"
+
+# LNET network carrying Lustre traffic over the `ib_addrs` interfaces. NIDs
+# elsewhere use "@o2ib", which is o2ib0.
+lustreadm_bin: /usr/racktop/sbin/lustreadm
+lnet_nettype: o2ib
+lnet_netnum: 0
+lnet_name: "{{ lnet_nettype }}{{ lnet_netnum }}"
 
 # Addresses of NTP servers with which target Lustre nodes should synchronize
 # their clocks.
@@ -29,16 +33,12 @@ ipmi_setup_script_path: /run/ipmi_user_setup.sh
 update_necessary: true
 hide_sensitive_output: false
 
-# Location of the offline registration file on the remote systems.
-offline_reg_filename: /tmp/oreg
-
-# Name of the temporary user to create for the purposes of registration.
-# This user should be removed once it is no-longer required.
-offline_reg_user: ansiblereg
-
-# Name of the entity accepting the EULA. Should be personalized if the
-# default value is not acceptable.
-offline_reg_eula_name: "System Administrator"
+# Licensing (tasks/registration.yml). Each HA node's .oreg file is named by
+# its `license_file` inventory variable.
+licadm_bin: /usr/racktop/sbin/licadm
+license_remote_file: /root/license.oreg
+# Name recorded as accepting the EULA. Personalize if the customer prefers.
+license_eula_signer: "System Administrator"
 bsr_config_file: /etc/bsr.conf
 
 # This tunable enables us to unconditionally regenerate HA configuration
@@ -46,25 +46,41 @@ bsr_config_file: /etc/bsr.conf
 # them after their initial creation.
 hiavd_force_config_recreation: false
 hiavd_initial_revision_id: 1
-hiavd_conf_dir: /etc/racktop/hiavd
 
-# hiavd configuration file
-hiavd_config_file_witness: "{{ hiavd_conf_dir }}/{{ instance }}/hiavd.conf"
-hiavd_config_file_default: "{{ hiavd_conf_dir }}/hiavd.conf"
-# For a witness, due to the multi-tenancy requirements the path will be
-# different from the path on the hiavd nodes, which are only ever part of one
-# cluster.
-hiavd_config_file: "{{ hiavd_config_file_witness if is_witness else hiavd_config_file_default }}"
+# Multi-cluster witness support.
+#
+# A single witness host can serve several HA clusters by running one confd and
+# one hiavd instance per cluster. The ha-witness RPM supports this natively:
+# instance 0 is the default confd.service/hiavd.service, and instance N > 0 is
+# confd@N.service/hiavd@N.service. The services derive their file locations
+# and confd ports from the instance number:
+#
+#   instance  hiavd config                           hiavd port  confd ports
+#   0         /etc/racktop/hiavd/hiavd.conf          4746        2379, 2380
+#   1         /etc/racktop/hiavd_1/hiavd_1.conf      4747        2381, 2382
+#   N         /etc/racktop/hiavd_N/hiavd_N.conf      4746+N      2379+2N, 2380+2N
+#
+# hiavd does not derive its port from the instance; CommsPort in the
+# configuration file sets it. Every member of a cluster must use the same
+# CommsPort, so the HA pair and its witness instance share ha_comms_port.
+#
+# witness_instance is set in the inventory on each HA group and on each
+# cluster_witness entry. The HA nodes always run the default service
+# instances; only the witness uses instance-specific names and paths.
+witness_instance_id: "{{ witness_instance | default(0) | int }}"
+ha_instance_suffix: "{{ '_' ~ witness_instance_id if ('cluster_witness' in group_names and witness_instance_id | int > 0) else '' }}"
+ha_comms_port: "{{ 4746 + (witness_instance_id | int) }}"
+confd_client_port: "{{ 2379 + 2 * (witness_instance_id | int) }}"
+confd_peer_port: "{{ 2380 + 2 * (witness_instance_id | int) }}"
+hiavd_service: "{{ 'hiavd@' ~ witness_instance_id if ha_instance_suffix else 'hiavd' }}"
+confd_service: "{{ 'confd@' ~ witness_instance_id if ha_instance_suffix else 'confd' }}"
 
-# hiavd serialized state file
-hiavd_state_file_witness: "{{ hiavd_conf_dir }}/{{ instance }}/serialized.dat"
-hiavd_state_file_default: "{{ hiavd_conf_dir }}/serialized.dat"
-hiavd_state_file: "{{ hiavd_state_file_witness if is_witness else hiavd_state_file_default }}"
-
-# hiavd identifiers file
-hiavd_identifiers_file_witness: "{{ hiavd_conf_dir }}/{{ instance }}/identifiers.dat"
-hiavd_identifiers_file_default: "{{ hiavd_conf_dir }}/identifiers.dat"
-hiavd_identifiers_file: "{{ hiavd_identifiers_file_witness if is_witness else hiavd_identifiers_file_default }}"
+# hiavd keeps identifiers.dat and serialized.dat beside its configuration file.
+hiavd_instance_name: "hiavd{{ ha_instance_suffix }}"
+hiavd_conf_dir: "/etc/racktop/{{ hiavd_instance_name }}"
+hiavd_config_file: "{{ hiavd_conf_dir }}/{{ hiavd_instance_name }}.conf"
+hiavd_state_file: "{{ hiavd_conf_dir }}/serialized.dat"
+hiavd_identifiers_file: "{{ hiavd_conf_dir }}/identifiers.dat"
 
 is_not_witness: "{{ 'cluster_witness' not in group_names }}"
 is_witness: "{{ 'cluster_witness' in group_names }}"

@@ -3,7 +3,7 @@
 # If pools are configured already, while they maybe aren't imported we do not
 # want to go behind hiavd and attempt to import the pools without hiavd's
 # awareness.
-- name: Ensure pools are imported and ready
+- name: Ensure pools are imported and ready, with multihost off
   import_zfs_pool:
     poolname: "{{ item }}"
   with_items: "{{ zpools }}"

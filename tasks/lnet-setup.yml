@@ -1,8 +1,32 @@
 ---
-- name: Generate lnet interface configuration from template
-  template:
-    src: "{{ item.src }}"
-    dest: "{{ item.dest }}"
-    mode: "755"
-  loop:
-    - { src: "../templates/etc/lnet.conf.j2", dest: "/etc/lnet.conf" }
+# LNET is managed through lustred via lustreadm, which also persists the
+# running configuration to /etc/lnet.conf. All InfiniBand interfaces with an
+# address in `ib_addrs` are bound to a single network, `lnet_name`.
+- name: Configure LNET network {{ lnet_name }}
+  vars:
+    lnet_ifaces: "{{ ib_addrs | dict2items | selectattr('value') | map(attribute='key') | sort }}"
+    lnet_iface_args: "{{ lnet_ifaces | map('regex_replace', '^', '--iface=') | list }}"
+  when: lnet_ifaces | length > 0
+  block:
+    - name: Query LNET network {{ lnet_name }}
+      ansible.builtin.command:
+        argv: ["{{ lustreadm_bin }}", --json, lnet, list, --name, "{{ lnet_name }}"]
+      register: lnet_list
+      changed_when: false
+      check_mode: false
+
+    - name: Record current LNET network {{ lnet_name }}
+      ansible.builtin.set_fact:
+        lnet_current: "{{ (lnet_list.stdout | from_json | default([], true) | first) | default({}) }}"
+
+    - name: Create LNET network {{ lnet_name }} on {{ lnet_ifaces | join(', ') }}
+      ansible.builtin.command:
+        argv: "{{ [lustreadm_bin, '--json', 'lnet', 'create', '--nettype=' ~ lnet_nettype, '--netnum=' ~ lnet_netnum] + lnet_iface_args }}"
+      when: lnet_current == {}
+
+    - name: Bind LNET network {{ lnet_name }} to {{ lnet_ifaces | join(', ') }}
+      ansible.builtin.command:
+        argv: "{{ [lustreadm_bin, '--json', 'lnet', 'modify', '--name=' ~ lnet_name] + lnet_iface_args }}"
+      when:
+        - lnet_current != {}
+        - (lnet_current.Interfaces | default([], true) | sort) != lnet_ifaces

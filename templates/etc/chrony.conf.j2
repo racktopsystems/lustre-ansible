@@ -1,7 +1,7 @@
 # Use public servers from the pool.ntp.org project.
 # Please consider joining the pool (http://www.pool.ntp.org/join.html).
-{% for ipaddr in ntp_servers %}
-{{ ipaddr }}
+{% for server in ntp_servers %}
+server {{ server }} iburst
 {% endfor %}
 
 # Record the rate at which the system clock gains/losses time.

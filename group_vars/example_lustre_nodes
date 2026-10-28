@@ -1,7 +1,4 @@
 ---
-# IPv4 netmask used by all configured IB interfaces.
-ib_netmask: 24
-
 # Name of the clustered filesystem exposed to the clients.
 filesystem_name: bsrfs
 

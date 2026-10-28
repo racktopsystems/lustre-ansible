@@ -91,10 +91,6 @@
     # Tasks for NTP configuration
     - import_tasks: tasks/ntp-setup.yml
 
-    # Tasks for administrative and HB network configuration
-    # admin network configuration
-    - import_tasks: tasks/admin-interface.yml
-    #
     # hiavd heartbeat interface configuration
     - import_tasks: tasks/heartbeat.yml
       when:

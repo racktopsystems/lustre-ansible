@@ -18,7 +18,7 @@
 
     first_node_uuid: "{{ node1.ansible_product_uuid }}"
 
-    first_node_private_ip_address: "{{ node1.hb_iface_ipaddr }}"
+    first_node_private_ip_address: "{{ node1.hb_iface_address }}"
 
     first_node_public_ip_address: "{{ node1.ansible_default_ipv4.address }}"
 
@@ -28,7 +28,7 @@
 
     second_node_uuid: "{{ node2.ansible_product_uuid }}"
 
-    second_node_private_ip_address: "{{ node2.hb_iface_ipaddr }}"
+    second_node_private_ip_address: "{{ node2.hb_iface_address }}"
 
     second_node_public_ip_address: "{{ node2.ansible_default_ipv4.address }}"
 
@@ -65,7 +65,7 @@
 
     first_node_name: "{{ hostvars[groups[group][0]].ansible_hostname if hostvars[groups[group][0]].first_ha_node else hostvars[groups[group][1]].ansible_hostname }}"
 
-    first_node_private_ip_address: "{{ hostvars[groups[group][0]].hb_iface_ipaddr if first_ha_node else hostvars[groups[group][1]].hb_iface_ipaddr }}"
+    first_node_private_ip_address: "{{ hostvars[groups[group][0]].hb_iface_address if first_ha_node else hostvars[groups[group][1]].hb_iface_address }}"
 
     first_node_public_ip_address: "{{ hostvars[groups[group][0]].ansible_default_ipv4.address if first_ha_node else hostvars[groups[group][1]].ansible_default_ipv4.address }}"
 
@@ -76,7 +76,7 @@
 
     second_node_name: "{{ hostvars[groups[group][0]].ansible_hostname if not first_ha_node else hostvars[groups[group][1]].ansible_hostname }}"
 
-    second_node_private_ip_address: "{{ hostvars[groups[group][0]].hb_iface_ipaddr if not first_ha_node else hostvars[groups[group][1]].hb_iface_ipaddr }}"
+    second_node_private_ip_address: "{{ hostvars[groups[group][0]].hb_iface_address if not first_ha_node else hostvars[groups[group][1]].hb_iface_address }}"
 
     second_node_public_ip_address: "{{ hostvars[groups[group][0]].ansible_default_ipv4.address if not first_ha_node else hostvars[groups[group][1]].ansible_default_ipv4.address }}"
 
@@ -120,33 +120,30 @@
     #   debug:
     #     msg: "ClusterId {{ reg_cluster_guid.guid_hash }} ClusterGuid {{ reg_cluster_guid.guid }} Identifiers file {{ hiavd_identifiers_file }} First node name {{ first_node_name }} First node uuid {{ first_node_uuid }} Second node name {{ second_node_name }} Second node uuid {{ second_node_uuid }} First node public IP {{ first_node_public_ip_address }} Second node public IP {{ second_node_public_ip_address }} Group {{ debug_group }} My role {{ debug_my_role }}"
 
+    - name: Ensure hiavd config directory {{ hiavd_conf_dir }} exists
+      ansible.builtin.file:
+        dest: "{{ hiavd_conf_dir }}"
+        state: directory
+        mode: "0755"
+      register: hiavd_config_dir_exists_result
+
     - name: Generate {{ hiavd_identifiers_file }}
       ansible.builtin.copy:
         content: '{"ClusterId": {{ reg_cluster_guid.guid_hash }}, "ClusterGuid": "{{ reg_cluster_guid.guid }}"}'
         dest: "{{ hiavd_identifiers_file }}"
       register: render_identifiers_result
 
-    - name: Ensure instance-specific config directory {{ hiavd_config_file | dirname }} exists
-      vars:
-        config_dir: "{{ hiavd_config_file | dirname }}"
-      ansible.builtin.file:
-        dest: "{{ config_dir }}"
-        state: directory
-        mode: 0755
-      when: is_witness
-      register: hiavd_config_dir_exists_result
-
     - name: Generate hiavd configuration file
       ansible.builtin.template:
         dest: "{{ hiavd_config_file }}"
-        src: templates/{{ hiavd_config_file_default }}.j2
+        src: templates/etc/racktop/hiavd/hiavd.conf.j2
       register: render_hiavd_config_result
 
     # After initial generation this state file will be mutated by hiavd.
     - name: Generate hiavd state file only if new configuration
       ansible.builtin.template:
         dest: "{{ hiavd_state_file }}"
-        src: templates/{{ hiavd_state_file_default }}.j2
+        src: templates/etc/racktop/hiavd/serialized.dat.j2
       when:
         - ansible_facts.hiavd.new_configuration
         - hiavd_force_config_recreation
@@ -160,9 +157,24 @@
             render_hiavd_state_result.changed or
             render_identifiers_result.changed }}
 
-    - name: Restart hiavd service upon configuration changes
+    # The witness opens its ports in multicluster-witness.yml.
+    - name: Gather service facts
+      ansible.builtin.service_facts:
+      when: is_not_witness
+
+    - name: Open hiavd port {{ ha_comms_port }} in firewalld
+      ansible.posix.firewalld:
+        port: "{{ ha_comms_port }}/tcp"
+        permanent: true
+        immediate: true
+        state: enabled
+      when:
+        - is_not_witness
+        - ansible_facts.services.get('firewalld.service', {}).get('state') == 'running'
+
+    - name: Restart {{ hiavd_service }} service upon configuration changes
       ansible.builtin.systemd_service:
-        name: hiavd
+        name: "{{ hiavd_service }}"
         state: restarted
       when: hiavd_config_changed
 
