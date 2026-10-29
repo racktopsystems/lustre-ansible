@@ -59,7 +59,9 @@ oss:
     # 4746+N and confd ports 2379+2N/2380+2N on the witness. Each pair that
     # shares a witness host needs a different instance.
     witness_instance: 0
-    # ZFS pools managed by this HA pair.
+    # ZFS pools managed by this HA pair. Each must be visible, exported, to
+    # both nodes; it is put in its own HA resource group, and hiavd imports
+    # it. The playbooks never import a pool themselves.
     zpools:
       - p_ost01
     # Lustre targets of this pair, created by lustred on whichever node has

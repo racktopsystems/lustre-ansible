@@ -1,38 +1,153 @@
 ---
-# LNET is managed through lustred via lustreadm, which also persists the
-# running configuration to /etc/lnet.conf. All InfiniBand interfaces with an
-# address in `ib_addrs` are bound to a single network, `lnet_name`.
+# LNET networks and Multi-Rail peers, managed through lustred with lustreadm,
+# which also persists the running configuration to /etc/lnet.conf. See the
+# LNET section of group_vars/all for lnet_networks, lnet_manage_peers,
+# lnet_extra_peers, lnet_discovery and lnet_prune_networks.
+#
+# Network names and NIDs are compared in canonical form (filter_plugins/
+# lnet_filters.py): LNET calls instance 0 "o2ib" rather than "o2ib0".
+
 - name: Ensure lustred is running
   ansible.builtin.systemd_service:
     name: lustred
     enabled: true
     state: started
 
-- name: Configure LNET network {{ lnet_name }}
+- name: Collect the LNET networks for this server
+  ansible.builtin.set_fact:
+    lnet_desired: >-
+      {%- set ns = namespace(l=[]) -%}
+      {%- for n in lnet_networks | default(lnet_networks_default) if n.ifaces | default([]) | length > 0 -%}
+      {%- set ns.l = ns.l + [{
+           'name': (n.nettype | default('') ~ (n.netnum | default(0) | int)) | lnet_net_name,
+           'nettype': n.nettype | default(''),
+           'netnum': n.netnum | default(0) | int,
+           'ifaces': n.ifaces | list}] -%}
+      {%- endfor -%}
+      {{ ns.l }}
+
+- name: Validate the LNET networks
   vars:
-    lnet_ifaces: "{{ ib_addrs | dict2items | selectattr('value') | map(attribute='key') | sort }}"
-    lnet_iface_args: "{{ lnet_ifaces | map('regex_replace', '^', '--iface=') | list }}"
-  when: lnet_ifaces | length > 0
+    ifaces: "{{ lnet_desired | map(attribute='ifaces') | flatten }}"
+  ansible.builtin.assert:
+    that:
+      - lnet_desired | map(attribute='nettype') | reject('match', '^[a-z][a-z0-9]*[a-z]$') | list | length == 0
+      - lnet_desired | map(attribute='netnum') | select('lt', 0) | list | length == 0
+      - lnet_desired | map(attribute='name') | unique | length == lnet_desired | length
+      - ifaces | unique | length == ifaces | length
+      - ifaces | difference(ansible_interfaces) | length == 0
+    fail_msg: >-
+      lnet_networks must give each network a nettype (e.g. o2ib or tcp), a
+      netnum of 0 or more, and its interfaces. Networks must be distinct, an
+      interface may be on only one network, and every interface must exist
+      on this host ({{ ansible_interfaces | sort | join(', ') }}). Got:
+      {{ lnet_desired | map(attribute='name') | zip(lnet_desired | map(attribute='ifaces')) | list }}
+    quiet: true
+
+- name: List LNET networks
+  ansible.builtin.command:
+    argv: ["{{ lustreadm_bin }}", --json, lnet, list]
+  register: lnet_list
+  changed_when: false
+  check_mode: false
+
+- name: Configure LNET networks
+  vars:
+    current: "{{ lnet_list.stdout | from_json | default([], true) }}"
+    current_by_name: "{{ dict(current | map(attribute='Name') | map('lnet_net_name') | zip(current)) }}"
+    desired_names: "{{ lnet_desired | map(attribute='name') | list }}"
   block:
-    - name: Query LNET network {{ lnet_name }}
+    # In lnet_networks order, so that on a new server the first interface of
+    # the first network becomes the primary NID.
+    - name: Create LNET network {{ item.name }}
       ansible.builtin.command:
-        argv: ["{{ lustreadm_bin }}", --json, lnet, list, --name, "{{ lnet_name }}"]
-      register: lnet_list
+        argv: >-
+          {{ [lustreadm_bin, '--json', 'lnet', 'create',
+              '--nettype=' ~ item.nettype, '--netnum=' ~ item.netnum]
+             + (item.ifaces | map('regex_replace', '^', '--iface=') | list) }}
+      loop: "{{ lnet_desired | rejectattr('name', 'in', current_by_name) | list }}"
+      loop_control:
+        label: "{{ item.name }} on {{ item.ifaces | join(', ') }}"
+
+    # lustred re-creates a network to change its interfaces; its peers are
+    # kept, as LNET's peer table is global.
+    - name: Bind LNET network {{ item.name }} to its interfaces
+      ansible.builtin.command:
+        argv: >-
+          {{ [lustreadm_bin, '--json', 'lnet', 'modify', '--name=' ~ item.name]
+             + (item.ifaces | map('regex_replace', '^', '--iface=') | list) }}
+      loop: "{{ lnet_desired | selectattr('name', 'in', current_by_name) | list }}"
+      loop_control:
+        label: "{{ item.name }} on {{ item.ifaces | join(', ') }}"
+      when: (current_by_name[item.name].Interfaces | default([], true) | sort) != (item.ifaces | sort)
+
+    - name: Remove LNET networks not in lnet_networks
+      ansible.builtin.command:
+        argv: ["{{ lustreadm_bin }}", --json, lnet, delete, "--name={{ item }}"]
+      loop: "{{ current_by_name.keys() | reject('in', desired_names) | list }}"
+      when: lnet_prune_networks | default(false) | bool
+
+    - name: Report LNET networks not in lnet_networks
+      ansible.builtin.debug:
+        msg: >-
+          LNET network {{ item }} is configured but not in lnet_networks; it
+          was left in place. Set lnet_prune_networks to remove it.
+      loop: "{{ current_by_name.keys() | reject('in', desired_names) | list }}"
+      when: not (lnet_prune_networks | default(false) | bool)
+
+- name: Set LNET dynamic peer discovery
+  when: lnet_discovery is defined
+  block:
+    - name: Read LNET dynamic peer discovery
+      ansible.builtin.command:
+        argv: ["{{ lustreadm_bin }}", --json, lnet, discovery]
+      register: lnet_discovery_state
       changed_when: false
       check_mode: false
 
-    - name: Record current LNET network {{ lnet_name }}
-      ansible.builtin.set_fact:
-        lnet_current: "{{ (lnet_list.stdout | from_json | default([], true) | first) | default({}) }}"
-
-    - name: Create LNET network {{ lnet_name }} on {{ lnet_ifaces | join(', ') }}
+    - name: Turn LNET dynamic peer discovery {{ 'on' if lnet_discovery | bool else 'off' }}
       ansible.builtin.command:
-        argv: "{{ [lustreadm_bin, '--json', 'lnet', 'create', '--nettype=' ~ lnet_nettype, '--netnum=' ~ lnet_netnum] + lnet_iface_args }}"
-      when: lnet_current == {}
+        argv:
+          - "{{ lustreadm_bin }}"
+          - --json
+          - lnet
+          - discovery
+          - "{{ '--enable' if lnet_discovery | bool else '--disable' }}"
+      when: (lnet_discovery_state.stdout | from_json).Discovery != (lnet_discovery | bool)
 
-    - name: Bind LNET network {{ lnet_name }} to {{ lnet_ifaces | join(', ') }}
+# Every server's networks are configured by now (tasks run in step across
+# hosts), so the NIDs read here are final.
+- name: Read the LNET NIDs of the Lustre servers
+  ansible.builtin.include_tasks: lnet-nids.yml
+
+# Peers are reconciled, so a server whose NIDs could not be read would lose
+# its peer entries everywhere. Leave peers alone until every server reads.
+- name: Configure Multi-Rail LNET peers
+  when:
+    - lnet_manage_peers | default(true) | bool
+    - lnet_unread_servers | length == 0
+  vars:
+    own_nets: >-
+      {{ (lnet_server_lists.results | selectattr('item', 'eq', inventory_hostname) | first).stdout
+         | from_json | default([], true) }}
+    own_by_name: "{{ dict(own_nets | map(attribute='Name') | map('lnet_net_name') | zip(own_nets)) }}"
+    plan: "{{ lnet_server_nids | lnet_peer_plan(inventory_hostname, own_by_name.keys() | list, lnet_extra_peers | default([])) }}"
+  block:
+    - name: Report peers this server cannot reach
+      ansible.builtin.debug:
+        msg: >-
+          No LNET network in common with {{ plan.unreachable | join(', ') }},
+          or no LNET NIDs configured there, so not configured as peers.
+      when: plan.unreachable | length > 0
+
+    # --peer gives the complete set for the network: configured peers not
+    # listed are removed, while peers found by discovery are left to LNET.
+    - name: Configure the peers of LNET network {{ item.key }}
       ansible.builtin.command:
-        argv: "{{ [lustreadm_bin, '--json', 'lnet', 'modify', '--name=' ~ lnet_name] + lnet_iface_args }}"
-      when:
-        - lnet_current != {}
-        - (lnet_current.Interfaces | default([], true) | sort) != lnet_ifaces
+        argv: >-
+          {{ [lustreadm_bin, '--json', 'lnet', 'modify', '--name=' ~ item.key]
+             + ((item.value | map('regex_replace', '^', '--peer=') | list) if item.value else ['--clear-peers']) }}
+      loop: "{{ plan.peers | dict2items }}"
+      loop_control:
+        label: "{{ item.key }}: {{ item.value | join(' ') if item.value else 'no peers' }}"
+      when: own_by_name[item.key].Peers | default([], true) | lnet_peers_differ(item.value)

@@ -15,7 +15,7 @@ Once this project is fully implemented we expect certain functions to remain out
 - Basic network configuration beyond the "primary" interface, such as the heartbeat, infiniband, etc.
 - Common system settings such as DNS, NTP, SELinux
 - High availability and associated resource groups
-- Lnet setup (Lustre networking), via `lustreadm lnet` on the InfiniBand interfaces in `ib_addrs`
+- LNET (Lustre networking), via `lustreadm lnet`: networks, Multi-Rail across interfaces and networks, and peers (see "LNET" below)
 - Lustre storage configuration, via `lustreadm dataset` (lustred creates, mounts and fails over the targets)
 
 ## Repository organization
@@ -90,7 +90,7 @@ The top-most level in this file is a hash containing group names, each of which 
 #### Hosts
 The HA tasks look hosts up by fixed inventory names, so the Lustre servers must be named `ossnode1`, `ossnode2`, `mdsnode1` and `mdsnode2`. The real address of each host is supplied with `ansible_host`. The groups are:
 
-- `oss` and `mds`: the two HA pairs. Each group sets `witness_instance` (see below), and may define a `zpools` list of the ZFS pools managed by that pair and a `lustre_targets` list of the Lustre targets on those pools (see "Lustre targets" below).
+- `oss` and `mds`: the two HA pairs. Each group sets `witness_instance` (see below), and may define a `zpools` list of the ZFS pools managed by that pair (see "ZFS pools and HA" below) and a `lustre_targets` list of the Lustre targets on those pools (see "Lustre targets" below).
 - `cluster_witness`: the HA witness. One host can witness both pairs by listing it once per pair under different inventory names with the same `ansible_host`. Each entry sets `role` (`oss` or `mds`) and `witness_instance`, which must match the value on that pair's group.
 - `lustre_nodes`: everything the playbooks configure (`oss`, `mds` and `cluster_witness`). The witness must be included so its facts are available when the HA peers are configured.
 
@@ -119,6 +119,26 @@ oss:
 ### Group variables file
 In addition to the inventory file which contains _all_ remote systems that Ansible needs to know about we created a `group_vars/example_lustre_nodes` variables file. This file should be named `lustre_nodes`, which will match the name of the group defined in the inventory file. Thus, variables in this file will be made available at runtime to all systems in the inventory which belong to the `lustre_nodes` group. This file is meant to provide environment-specific parameters, but unlike the inventory file where variables are specific to each system, these variables will apply to _all_ members of the `lustre_nodes` group. It sets `filesystem_name`, and `lustre_mgs_group` if the MGS is not on the `mds` pair.
 
+### ZFS pools and HA
+The playbooks never import a pool. Each pool in a pair's `zpools` must already exist and be visible, exported, to both nodes of the pair (`hwadm ls p` lists it on each). The HA tasks put each pool in a resource group of its own, named after it (`p_ost01` becomes `RG_ost01`, `oss01` becomes `RG_oss01`), on the node with `first_ha_node: true`. hiavd then imports the pool on that node and moves it between the two nodes from then on. Before that, the first node checks that both nodes see each pool, running `hwadm` on each node as an ordinary task (no node logs in to its peer), and stops with the pools each node is missing. Only the first node creates the resource groups, so the two nodes never race to create the same one, and the playbook waits until hiavd reports each pool healthy before going on. A pool already in a resource group is left where it is, so re-running the playbook never moves a pool that has failed over.
+
+### LNET
+`tasks/lnet-setup.yml` configures LNET on each Lustre server through `lustreadm lnet`, Multi-Rail throughout. The variables are documented in `group_vars/all`; set them per host or per group in the inventory. They are deliberately not defined in `group_vars/all`, which would take precedence over group variables in the inventory file.
+
+- `lnet_networks` lists the server's networks in order, each with `nettype`, `netnum` and `ifaces`. The default (`lnet_networks_default`) is one `o2ib0` network over every interface in `ib_addrs`, which is Multi-Rail across those interfaces. To put each InfiniBand fabric on its own network, or to add Ethernet, list them:
+  ```yaml
+  lnet_networks:
+    - {nettype: o2ib, netnum: 0, ifaces: [ib0]}
+    - {nettype: o2ib, netnum: 1, ifaces: [ib1]}
+    - {nettype: tcp, netnum: 0, ifaces: [ens1f0]}
+  ```
+  The first interface of the first network gives the server its primary NID. Networks are created in this order, and a network whose interfaces differ is rebound. Interfaces outside `ib_addrs` must already have an IPv4 address. Networks configured but not listed are reported, and removed if `lnet_prune_networks` is true.
+- `lnet_manage_peers` (default true) configures every other Lustre server as a Multi-Rail peer with all of its NIDs, under its primary NID, or under its first NID on a network this server shares when it is not on the primary NID's network. Each server's NIDs are read from that server's lustred, so this also works with `--limit`. Peers are reconciled per network: a configured peer that is not a Lustre server or in `lnet_extra_peers` is removed. Peers found by discovery are left to LNET.
+- `lnet_extra_peers` adds peers that are not servers in this inventory, such as clients or routers, each as `"primary-nid,other-nid,..."`.
+- `lnet_discovery`, when set to true or false, turns LNET dynamic peer discovery on or off.
+
+NIDs and network names are compared in LNET's canonical form, in which instance 0 has no number (`o2ib`, `10.0.0.1@o2ib`). This needs a lustreadm that keeps commas within a `--peer`, `--servicenode` or `--mgsnid` value, so that one value carries all the NIDs of one Multi-Rail node.
+
 ### Lustre targets
 Lustre targets are managed by lustred through `lustreadm` (`tasks/lustre-storage.yml`); the playbook no longer runs `mkfs.lustre`, writes fstab entries or installs hiavd hook scripts. Each HA group lists its targets in the inventory:
 ```yaml
@@ -134,7 +154,7 @@ mds:
 - `role` is `mgt` (standalone MGS), `mgsmdt` (combined MGS and MDT), `mdt` or `ost`. Exactly one target serves the MGS, in the `lustre_mgs_group` pair (default `mds`).
 - The MDT/OST index is the number that ends the dataset name (`lustre-ost03` is index 3) unless `index` is given, and must be unique among MDTs or among OSTs.
 - Optional per target: `zfs_props` (added to lustred's defaults of `compression=lz4`, `mountpoint=none` and, for OSTs, `recordsize=1M`), `mount_options`, `mountpoint` (default `/lustre/<pool>/<dataset>`), `automount` (default `true`) and `options` (extra `mkfs.lustre` options lustred allows: `--param=`, `--network=`, `--comment=`).
-- Service nodes are the target's HA pair and MGS NIDs are the nodes of the MGS pair, both built from each node's `ib_addrs` on the `lnet_name` network.
+- Service nodes are the target's HA pair and MGS NIDs are the nodes of the MGS pair. Each node is given with all of its LNET NIDs, primary first, read from lustred, so a Multi-Rail server is reachable on every network it is on.
 
 A target is created on whichever node of its pair has the pool imported, then mounted, MGS first, then MDTs, then OSTs. lustred stores each target's settings as ZFS user properties, and hiavd asks lustred to mount and unmount a pool's targets when it imports and exports the pool, so targets follow their pool on failover. An existing target is never reformatted or changed: the playbook reports one whose role, index, service nodes or MGS NIDs differ from the inventory, since changing those needs the file system stopped (`lustreadm dataset modify --writeconf`).
 

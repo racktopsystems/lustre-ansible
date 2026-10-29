@@ -190,13 +190,71 @@
         state: restarted
       when: hiavd_config_changed
 
-    # We should not need to restart hiavd after resource group creation.
-    # However, some time may pass between creation and nodes being in sync.
-    - name: Create resource group for pool
-      create_resource_group:
-        poolname: "{{ item }}"
-        ha_peer_ipaddr: "{{ ha_peer_ipaddr }}"
-      with_items:
-        - "{{ zpools }}"
+    # Pools are never imported by Ansible. Each pool in `zpools` must be
+    # visible, exported, to both nodes of the pair; it is put in a resource
+    # group of its own (p_ost01 -> RG_ost01) on the first HA node, and hiavd
+    # imports it there and moves it between the nodes from then on. Only
+    # the first node does this, so the two nodes do not race to create the
+    # same resource group; the module waits until hiavd reports the pool
+    # healthy, so it is imported before the Lustre tasks look for it.
+    #
+    # hiavd refuses a pool that either node cannot see, so both nodes are
+    # checked first, each as an ordinary task on that node (delegate_to),
+    # which also works when the peer is outside --limit.
+    - name: Check that both HA nodes see the pools
       when:
         - is_not_witness
+        - first_ha_node | bool
+        - zpools | default([]) | length > 0
+      block:
+        - name: Rescan exported pools on both HA nodes
+          ansible.builtin.command:
+            argv: [/usr/racktop/sbin/hwadm, rescan, --ep]
+          delegate_to: "{{ item }}"
+          loop: ["{{ inventory_hostname }}", "{{ peer_inventory_name }}"]
+          changed_when: false
+          check_mode: false
+
+        - name: List the pools each HA node sees
+          ansible.builtin.command:
+            argv: [/usr/racktop/sbin/hwadm, -j, ls, p]
+          delegate_to: "{{ item }}"
+          loop: ["{{ inventory_hostname }}", "{{ peer_inventory_name }}"]
+          register: ha_pool_lists
+          changed_when: false
+          check_mode: false
+          # hwd finishes a rescan in the background, so allow it a moment.
+          until: zpools | difference(ha_pool_lists.stdout | default('') | hwadm_pool_names) | length == 0
+          retries: 6
+          delay: 5
+          failed_when: false
+
+        - name: Record the pools each HA node does not see
+          ansible.builtin.set_fact:
+            ha_missing_pools: >-
+              {{ ha_missing_pools | default({}) | combine({item.item:
+                 zpools | difference(item.stdout | default('') | hwadm_pool_names)}) }}
+          loop: "{{ ha_pool_lists.results }}"
+          loop_control:
+            label: "{{ item.item }}"
+
+        - name: Require the pools on both HA nodes
+          ansible.builtin.assert:
+            that: ha_missing_pools.values() | map('length') | sum == 0
+            fail_msg: >-
+              Pools in zpools must be visible to both HA nodes before they can
+              be put under HA control. Not seen: {{ ha_missing_pools | dict2items
+              | selectattr('value') | items2dict }}. Check the pool names in the
+              inventory and that both nodes see the drives (hwadm ls p).
+              {% for r in ha_pool_lists.results if r.rc | default(1) != 0 %}hwadm
+              failed on {{ r.item }}: {{ r.stderr | default(r.msg) | default('') }}. {% endfor %}
+            quiet: true
+
+    - name: Put pool under HA control in its resource group
+      create_resource_group:
+        poolname: "{{ item }}"
+        node: "{{ ansible_hostname }}"
+      loop: "{{ zpools | default([]) }}"
+      when:
+        - is_not_witness
+        - first_ha_node | bool

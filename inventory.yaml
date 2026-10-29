@@ -45,11 +45,10 @@ oss:
   vars:
     witness_instance: 0 # hiavd 4746, confd 2379/2380
     zpools:
-      - TODO_oss_pool # TODO: OSS ZFS pool name(s)
-    # TODO: confirm the OST layout. See inventory.yaml.example.
+      - oss01
     lustre_targets:
-      - pool: TODO_oss_pool
-        dataset: lustre-ost00
+      - pool: oss01
+        dataset: ost01
         role: ost
 
 mds:
@@ -86,11 +85,10 @@ mds:
   vars:
     witness_instance: 1 # hiavd 4747, confd 2381/2382
     zpools:
-      - TODO_mds_pool # TODO: MDS/MGS ZFS pool name(s)
-    # TODO: confirm combined MGS+MDT (mgsmdt) vs separate mgt and mdt targets.
+      - mgs01
     lustre_targets:
-      - pool: TODO_mds_pool
-        dataset: lustre-mdt00
+      - pool: mgs01
+        dataset: mgsmdt01
         role: mgsmdt
 
 # TODO: confirm lustre-stennis-witness1 (10.2.26.15) is the HA witness for

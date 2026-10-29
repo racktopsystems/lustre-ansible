@@ -12,4 +12,5 @@ filesystem_name: bsrfs
 
 # Lustre targets themselves are listed per HA group as `lustre_targets` in
 # the inventory; see inventory.yaml.example and tasks/lustre-storage.yml.
-# NIDs are derived from each node's ib_addrs, so none are listed here.
+# NIDs are read from each server's LNET configuration (lnet_networks in
+# group_vars/all), so none are listed here.

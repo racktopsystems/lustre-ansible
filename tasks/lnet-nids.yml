@@ -1,0 +1,36 @@
+---
+# Read the LNET NIDs of every Lustre server from lustred, in LNET order, so
+# the first NID of each is that server's primary NID. Each server is asked
+# directly (delegate_to), so this also works for a run limited to some hosts.
+# Sets lnet_server_nids: {inventory name: [NID, ...]}, and lnet_unread_servers
+# for servers whose NIDs could not be read (no lustreadm or lustred there
+# yet); those have no NIDs in lnet_server_nids.
+- name: Read the LNET NIDs of the Lustre servers
+  ansible.builtin.command:
+    argv: ["{{ lustreadm_bin }}", --json, lnet, list]
+  delegate_to: "{{ item }}"
+  loop: "{{ lustre_servers }}"
+  register: lnet_server_lists
+  changed_when: false
+  failed_when: false
+  check_mode: false
+
+- name: Record the LNET NIDs of the Lustre servers
+  vars:
+    read_ok: "{{ lnet_server_lists.results | selectattr('rc', 'defined') | selectattr('rc', 'eq', 0) | list }}"
+  ansible.builtin.set_fact:
+    lnet_server_nids: >-
+      {{ dict(read_ok | map(attribute='item')
+         | zip(read_ok | map(attribute='stdout') | map('from_json') | map('lnet_nids_of'))) }}
+    lnet_unread_servers: "{{ lustre_servers | difference(read_ok | map(attribute='item')) }}"
+
+- name: Report Lustre servers whose LNET NIDs could not be read
+  ansible.builtin.debug:
+    msg: >-
+      Could not read LNET from {{ item.item }}: {{ (item.stderr | default('', true)) or (item.msg | default('')) }}.
+      Install BrickStor with lustreadm there and run its LNET setup. Until
+      every server can be read, LNET peers are left unchanged and Lustre
+      targets are not created.
+  loop: "{{ lnet_server_lists.results | rejectattr('item', 'in', lnet_server_nids) | list }}"
+  loop_control:
+    label: "{{ item.item }}"

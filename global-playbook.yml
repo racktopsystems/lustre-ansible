@@ -32,6 +32,16 @@
   gather_facts: yes
 
   tasks:
+    # The HA configuration reads facts of every HA node and the witness:
+    # hostnames, UUIDs and addresses. A run limited to some hosts (--limit)
+    # gathers facts only for those, so gather them for the others here.
+    - name: Gather facts of Lustre nodes outside this run
+      ansible.builtin.setup:
+      delegate_to: "{{ item }}"
+      delegate_facts: true
+      loop: "{{ groups['lustre_nodes'] | difference(ansible_play_hosts_all) }}"
+      run_once: true
+
     # Register the system and install its BrickStor licenses first.
     # Skip with -e perform_registration=false.
     - import_tasks: tasks/registration.yml
@@ -96,11 +106,6 @@
 
     # confd peer/client interface selection
     - import_tasks: tasks/confd-config.yml
-      when:
-        - is_not_witness
-
-    # ZFS filesystem configuration
-    - import_tasks: tasks/zfs.yml
       when:
         - is_not_witness
 

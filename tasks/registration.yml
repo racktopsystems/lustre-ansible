@@ -44,6 +44,7 @@
         name: "{{ item }}"
         state: restarted
       loop:
+        - acld
         - bsrapid
         - bsrbootstrapd
         - bsrlicensed
@@ -52,8 +53,16 @@
         - healthd
         - hiavd
         - hwd
+        - identd
+        - keymgrd
+        - localuserd
+        - reportd
+        - rtrepld
+        - rtsnapd
         - secured
         - zcached
+        - lustred
+        - webhookd
       when: license_register_result is changed
 
   always:

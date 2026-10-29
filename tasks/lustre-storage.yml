@@ -16,8 +16,10 @@
 #       # options: ["--param=sys.timeout=40"]  # extra mkfs.lustre options
 #
 # Service nodes are the target's HA pair and MGS NIDs are the nodes of
-# `lustre_mgs_group`, both taken from each node's `ib_addrs`
-# (`lustre_node_nids` in group_vars/all), so no NIDs are listed by hand.
+# `lustre_mgs_group`. Each node is given with all of its LNET NIDs, primary
+# first, as lustred reports them (tasks/lnet-nids.yml), so a Multi-Rail
+# server can be reached on every network it is on and no NIDs are listed
+# by hand.
 #
 # A target is created on whichever node of its pair has the pool imported.
 # lustred keeps its settings as ZFS user properties on the dataset, and
@@ -51,6 +53,9 @@
       no longer installed.
     quiet: true
 
+- name: Read the LNET NIDs of the Lustre servers
+  ansible.builtin.include_tasks: lnet-nids.yml
+
 - name: Collect the Lustre targets of both HA pairs
   vars:
     target_list: >-
@@ -83,7 +88,6 @@
   vars:
     indexed: "{{ lustre_all_targets | rejectattr('role', 'eq', 'mgt') | list }}"
     mgs: "{{ lustre_all_targets | selectattr('role', 'in', ['mgt', 'mgsmdt']) | list }}"
-    nodes: "{{ (groups['oss'] | default([])) + (groups['mds'] | default([])) }}"
   ansible.builtin.assert:
     that:
       - filesystem_name is defined
@@ -96,15 +100,16 @@
       - indexed | map(attribute='key') | unique | length == indexed | length
       - mgs | length == 1
       - mgs | map(attribute='group') | first == lustre_mgs_group
-      - nodes | map('extract', hostvars, 'lustre_node_nids') | select('eq', '') | list | length == 0
+      - lnet_unread_servers | length == 0
+      - lustre_servers | map('extract', lnet_server_nids) | reject | list | length == 0
     fail_msg: >-
       Lustre targets are inconsistent. Each needs a pool from its group's
       zpools, a dataset name, and a role of mgt, mgsmdt, mdt or ost. MDTs and
       OSTs need an index (given, or the number ending the dataset name) that
       is unique among MDTs or among OSTs. Exactly one target, in group
       {{ lustre_mgs_group }}, serves the MGS. filesystem_name must be 1-8
-      letters, digits, '_' or '-', and every HA node needs an address in
-      ib_addrs. Targets: {{ lustre_all_targets | map(attribute='name') | zip(lustre_all_targets | map(attribute='role'), lustre_all_targets | map(attribute='index')) | list }}
+      letters, digits, '_' or '-', and every HA node needs LNET NIDs
+      (lnet_networks). LNET NIDs: {{ lnet_server_nids }}. Targets: {{ lustre_all_targets | map(attribute='name') | zip(lustre_all_targets | map(attribute='role'), lustre_all_targets | map(attribute='index')) | list }}
     quiet: true
   when: lustre_all_targets | length > 0
 
@@ -120,8 +125,8 @@
 - name: Configure the Lustre targets of this HA pair
   vars:
     my_targets: "{{ lustre_all_targets | selectattr('group', 'eq', lustre_ha_group) | selectattr('pool', 'in', ansible_facts.zfs.pools) | list }}"
-    service_nodes: "{{ groups[lustre_ha_group] | map('extract', hostvars, 'lustre_node_nids') | list }}"
-    mgs_nids: "{{ groups[lustre_mgs_group] | map('extract', hostvars, 'lustre_node_nids') | list }}"
+    service_nodes: "{{ groups[lustre_ha_group] | map('extract', lnet_server_nids) | map('lnet_node') | list }}"
+    mgs_nids: "{{ groups[lustre_mgs_group] | map('extract', lnet_server_nids) | map('lnet_node') | list }}"
     target_state: "{{ dict(lustre_existing | map(attribute='Dataset') | zip(lustre_existing)) }}"
   when: my_targets | length > 0
   block:
@@ -186,8 +191,8 @@
         label: "{{ item.name }}"
       when: >-
         cur.Role != item.role or (cur.Index | int) != item.index or
-        (cur.ServiceNodes | default([], true) | sort) != (service_nodes | sort) or
-        (cur.MgsNids | default([], true) | sort) != (want_mgs | sort)
+        (cur.ServiceNodes | default([], true) | map('lnet_node') | sort) != (service_nodes | sort) or
+        (cur.MgsNids | default([], true) | map('lnet_node') | sort) != (want_mgs | map('lnet_node') | sort)
 
     # lustred mounts automount targets on every later pool import; these
     # mount new targets now, and any left unmounted, in MGS, MDT, OST order.

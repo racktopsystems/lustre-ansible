@@ -8,23 +8,61 @@ hb_conn_name: "hb0"
 # This is the bare heartbeat address for configs that take no prefix.
 hb_iface_address: "{{ hb_iface_ipaddr.split('/') | first }}"
 
-# LNET network carrying Lustre traffic over the `ib_addrs` interfaces. NIDs
-# elsewhere use "@o2ib", which is o2ib0.
 lustreadm_bin: /usr/racktop/sbin/lustreadm
+
+# LNET (tasks/lnet-setup.yml). `lnet_networks` lists a Lustre server's LNET
+# networks in order; the first interface of the first network gives the
+# server its primary NID. A network over several interfaces is Multi-Rail
+# across them, and a server on several networks is Multi-Rail across those
+# as well. The default is one network, `lnet_nettype` instance
+# `lnet_netnum`, over every interface with an address in `ib_addrs`.
+# Set it per host or per group, e.g. one network per InfiniBand fabric plus
+# Ethernet:
+#
+#   lnet_networks:
+#     - {nettype: o2ib, netnum: 0, ifaces: [ib0]}
+#     - {nettype: o2ib, netnum: 1, ifaces: [ib1]}
+#     - {nettype: tcp, netnum: 0, ifaces: [ens1f0]}
+#
+# Interfaces other than those in `ib_addrs` must already have an IPv4
+# address; LNET derives each NID from it.
+#
+# The other LNET settings, also per host or per group:
+#
+#   lnet_manage_peers: true   Configure every other Lustre server as a
+#       Multi-Rail peer with all of its NIDs, so LNET uses all of them from
+#       the start rather than once discovery finds them. Peers are
+#       reconciled per network: a configured peer that is neither a Lustre
+#       server nor in lnet_extra_peers is removed. Peers found by discovery
+#       are left alone.
+#   lnet_extra_peers: []      Peers that are not Lustre servers in this
+#       inventory (clients, routers), each as its primary NID followed by
+#       its other NIDs, e.g. "10.0.0.50@o2ib,10.1.0.50@o2ib1".
+#   lnet_discovery:           true or false turns LNET dynamic peer
+#       discovery on or off; unset keeps the current setting (LNET's
+#       default is on).
+#   lnet_prune_networks: false  Remove LNET networks that are configured
+#       but not in lnet_networks.
+#
+# None of these is defined here, because a variable in group_vars/all takes
+# precedence over group variables in the inventory file; the tasks supply
+# the defaults instead. lnet_networks defaults to lnet_networks_default.
 lnet_nettype: o2ib
 lnet_netnum: 0
-lnet_name: "{{ lnet_nettype }}{{ lnet_netnum }}"
-# Network part of this site's NIDs: "o2ib" for o2ib0, "o2ib1" otherwise.
-lnet_nid_net: "{{ lnet_nettype if (lnet_netnum | int) == 0 else lnet_name }}"
-# This host's LNET NIDs, comma-separated: one per address in `ib_addrs`. In
-# lustreadm terms this describes one node (one --servicenode or --mgsnid).
-lustre_node_nids: "{{ ib_addrs | default({}) | dict2items | map(attribute='value') | select | map('regex_replace', '/.*$', '@' ~ lnet_nid_net) | join(',') }}"
+lnet_networks_default:
+  - nettype: "{{ lnet_nettype }}"
+    netnum: "{{ lnet_netnum }}"
+    ifaces: "{{ ib_addrs | default({}) | dict2items | selectattr('value') | map(attribute='key') | list }}"
+
+# The Lustre servers: both HA pairs, not the witness.
+lustre_servers: "{{ (groups['oss'] | default([])) + (groups['mds'] | default([])) }}"
 
 # Lustre targets (tasks/lustre-storage.yml) are created and mounted by
 # lustred through lustreadm. Each HA group (oss, mds) lists its targets in
 # `lustre_targets` in the inventory. `lustre_mgs_group` names the HA group
 # whose targets include the MGS (role mgt or mgsmdt); its nodes' NIDs are
-# passed to every MDT and OST as --mgsnid.
+# passed to every MDT and OST as --mgsnid. A node's NIDs are all of its LNET
+# NIDs, as lustred reports them, primary first.
 lustre_mgs_group: mds
 
 # Addresses of NTP servers with which target Lustre nodes should synchronize
