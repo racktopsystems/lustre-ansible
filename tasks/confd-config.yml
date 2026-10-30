@@ -1,6 +1,7 @@
 ---
 # confd selects peer URLs from `admin_iface` and excludes the heartbeat
-# (`hb_iface`) and InfiniBand interfaces from client URLs.
+# (`hb_iface`) and InfiniBand interfaces from client URLs. Auto-join is off:
+# tasks/confd-cluster.yml joins each member explicitly.
 - name: Generate confd configuration
   ansible.builtin.template:
     src: templates/etc/racktop/confd/confd.conf.j2

@@ -65,9 +65,14 @@ lustre_servers: "{{ (groups['oss'] | default([])) + (groups['mds'] | default([])
 # NIDs, as lustred reports them, primary first.
 lustre_mgs_group: mds
 
-# Addresses of NTP servers with which target Lustre nodes should synchronize
-# their clocks.
-ntp_servers:
+# NTP servers chrony synchronizes with (tasks/ntp-setup.yml). Set the
+# site's servers as `ntp_servers` (hostnames or IP addresses) in the
+# inventory, e.g. under `all: vars:`, or in group_vars/lustre_nodes; it is
+# not defined here, because group_vars/all would take precedence over the
+# inventory file. Without it these public pools are used, which only works
+# with internet access. `ntp_server_options` (default "iburst") is added to
+# each server line.
+ntp_servers_default:
   - "0.us.pool.ntp.org"
   - "1.us.pool.ntp.org"
   - "2.us.pool.ntp.org"

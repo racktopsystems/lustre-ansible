@@ -1,0 +1,304 @@
+---
+# Form the confd cluster of each HA pair: the pair's first HA node is the
+# leader, and the second node and then the pair's witness instance join it
+# with `confadm join`. Each member is joined explicitly; confd's own
+# auto-join is turned off in confd.conf so it cannot race these joins.
+#
+# HA nodes run confd instance 0. On the witness, the instance is the pair's
+# witness_instance, which also sets its ports (2379/2380 + 2 * instance).
+# confd peers over each system's main IP address, and a joining member
+# reaches the leader's bsrapid at https://<leader main IP>:8443.
+#
+# The join needs a user with privileges on the leader: confd_join_username
+# (default bsradmin) and confd_join_password, read from sensitive/creds.yaml
+# when it is set there, otherwise from the bsradminpass file the playbook is
+# run with.
+
+- name: Work out this host's confd cluster
+  vars:
+    pair: >-
+      {{ role if is_witness | bool else ('oss' if inventory_hostname in groups['oss'] else 'mds') }}
+    leader: >-
+      {{ groups[pair] | map('extract', hostvars) | selectattr('first_ha_node', 'defined')
+         | selectattr('first_ha_node') | map(attribute='inventory_hostname') | first | default('') }}
+  ansible.builtin.set_fact:
+    confd_pair: "{{ pair }}"
+    confd_instance: "{{ witness_instance_id | int if is_witness | bool else 0 }}"
+    confd_leader: "{{ leader }}"
+    confd_leader_ip: "{{ hostvars[leader].ansible_default_ipv4.address | default('') if leader else '' }}"
+    confd_is_leader: "{{ inventory_hostname == leader }}"
+
+- name: Require a confd leader for the pair
+  ansible.builtin.assert:
+    that:
+      - confd_leader | length > 0
+      - confd_leader_ip | length > 0
+    fail_msg: >-
+      The {{ confd_pair }} HA pair needs one node with first_ha_node: true,
+      whose main IP address is known, to lead its confd cluster.
+    quiet: true
+
+- name: Gather service facts
+  ansible.builtin.service_facts:
+
+# The witness opens its instance's ports in multicluster-witness.yml.
+- name: Open confd ports in firewalld
+  ansible.posix.firewalld:
+    port: "{{ item }}/tcp"
+    permanent: true
+    immediate: true
+    state: enabled
+  loop: [2379, 2380]
+  when:
+    - is_not_witness
+    - ansible_facts.services.get('firewalld.service', {}).get('state') == 'running'
+
+- name: List the members of this host's confd cluster
+  ansible.builtin.command:
+    argv: [/usr/racktop/sbin/confadm, --json, --instance, "{{ confd_instance }}", member, show, all]
+  register: confd_members_before
+  changed_when: false
+  check_mode: false
+  # confd can take a minute to answer after it (re)starts.
+  until: confd_members_before.rc == 0
+  retries: 12
+  delay: 10
+
+- name: Record the confd membership
+  ansible.builtin.set_fact:
+    confd_members: "{{ confd_members_before.stdout | from_json | default([], true) }}"
+
+# Whether a member has joined is decided by the leader: it has joined only
+# if the leader's cluster lists its etcd member ID. A cluster that merely
+# names the leader's address is not enough, since a reinstalled leader keeps
+# its address but starts a new cluster.
+- name: Read this confd member
+  ansible.builtin.command:
+    argv: [/usr/racktop/sbin/confadm, --json, --instance, "{{ confd_instance }}", member, show]
+  register: confd_self_result
+  changed_when: false
+  check_mode: false
+  when: not confd_is_leader
+
+- name: List the members of the leader's confd cluster
+  ansible.builtin.command:
+    argv: [/usr/racktop/sbin/confadm, --json, --instance, "0", member, show, all]
+  delegate_to: "{{ confd_leader }}"
+  register: confd_leader_result
+  changed_when: false
+  check_mode: false
+  when: not confd_is_leader
+
+- name: Record whether this member is in its leader's cluster
+  ansible.builtin.set_fact:
+    confd_self: "{{ confd_self_result.stdout | from_json }}"
+    confd_joined: >-
+      {{ (confd_self_result.stdout | from_json).ID in
+         (confd_leader_result.stdout | from_json | default([], true) | map(attribute='ID') | list) }}
+  when: not confd_is_leader
+
+# An HA node in some other multi-member cluster is not changed automatically:
+# it has to be removed from that cluster by hand.
+- name: Require that the second HA node is not in another confd cluster
+  ansible.builtin.assert:
+    that: confd_joined or confd_members | length < 2
+    fail_msg: >-
+      confd on {{ inventory_hostname }} is in a cluster that is not the one led by
+      {{ confd_leader }} ({{ confd_leader_ip }}): {{ confd_members | map(attribute='PeerUrls') | list }}.
+      Remove it from that cluster first (confadm member remove).
+    quiet: true
+  when:
+    - is_not_witness
+    - not confd_is_leader
+
+# A witness instance still in some other cluster (typically the cluster of a
+# pair that has since been reinstalled, whose members no longer exist) is
+# reset to a standalone confd so it can join its pair's current cluster.
+# That cluster has lost its quorum, so the reset is done locally, the way
+# confd itself leaves a cluster: its node data and snapshots are moved aside
+# (kept, with a .stale-<time> suffix) and the instance restarted.
+- name: Reset the witness instance from its previous confd cluster
+  when:
+    - is_witness
+    - not confd_joined
+    - confd_members | length >= 2
+  vars:
+    # Instance N keeps its data in /var/racktop/confd_N; instance 0 uses
+    # DatabaseDir from its confd.conf, by default /var/racktop/confd.
+    confd_root: >-
+      {{ ('/var/racktop/confd_' ~ confd_instance) if (confd_instance | int) > 0
+         else (confd_witness_conf.content | default('') | b64decode
+               | regex_search('(?m)^\s*DatabaseDir\s*=\s*"([^"]+)"', '\1') | default(['/var/racktop/confd'], true) | first) }}
+    confd_node_dir: "{{ confd_root }}/{{ confd_self.NodeId }}"
+  block:
+    - name: Choose the suffix for the previous cluster's data
+      ansible.builtin.set_fact:
+        stale_suffix: ".stale-{{ now(utc=true, fmt='%Y%m%d%H%M%S') }}"
+
+    - name: Read the witness confd.conf
+      ansible.builtin.slurp:
+        src: /etc/racktop/confd/confd.conf
+      register: confd_witness_conf
+      failed_when: false
+      when: (confd_instance | int) == 0
+
+    - name: Find the witness instance's confd data
+      ansible.builtin.stat:
+        path: "{{ confd_node_dir }}"
+      register: confd_node_dir_stat
+
+    - name: Require the witness instance's confd data
+      ansible.builtin.assert:
+        that: confd_node_dir_stat.stat.isdir | default(false)
+        fail_msg: >-
+          confd instance {{ confd_instance }} on {{ inventory_hostname }} is in a
+          cluster other than the one led by {{ confd_leader }} and has to be reset,
+          but its data directory {{ confd_node_dir }} was not found.
+        quiet: true
+
+    - name: Report the reset
+      ansible.builtin.debug:
+        msg: >-
+          confd instance {{ confd_instance }} on {{ inventory_hostname }} is in a
+          cluster that is not the one led by {{ confd_leader }} ({{ confd_leader_ip }}):
+          {{ confd_members | map(attribute='PeerUrls') | list }}. Resetting it to a
+          standalone confd; its data is kept as {{ confd_node_dir }}{{ stale_suffix }}.
+
+    - name: Stop {{ confd_service }}
+      ansible.builtin.systemd_service:
+        name: "{{ confd_service }}"
+        state: stopped
+
+    - name: Move the previous cluster's confd data aside
+      ansible.builtin.command:
+        argv: [mv, "{{ item }}", "{{ item }}{{ stale_suffix }}"]
+        removes: "{{ item }}"
+      loop:
+        - "{{ confd_node_dir }}"
+        - "{{ confd_root }}/snapshots"
+
+    - name: Start {{ confd_service }}
+      ansible.builtin.systemd_service:
+        name: "{{ confd_service }}"
+        state: started
+
+    - name: Wait for the witness instance to come up standalone
+      ansible.builtin.command:
+        argv: [/usr/racktop/sbin/confadm, --json, --instance, "{{ confd_instance }}", member, show, all]
+      register: confd_members_reset
+      changed_when: false
+      until: >-
+        confd_members_reset.rc == 0 and
+        (confd_members_reset.stdout | from_json | default([], true) | length) == 1
+      retries: 18
+      delay: 10
+
+    - name: Record the reset membership
+      ansible.builtin.set_fact:
+        confd_members: "{{ confd_members_reset.stdout | from_json }}"
+
+- name: Read the confd join credentials
+  when:
+    - not confd_is_leader
+    - not confd_joined
+  block:
+    - name: Load sensitive/creds.yaml
+      ansible.builtin.include_vars:
+        file: sensitive/creds.yaml
+        name: sensitive
+      when:
+        - sensitive is not defined
+        - (playbook_dir ~ '/sensitive/creds.yaml') is file
+      no_log: true
+
+    - name: Choose the confd join credentials
+      ansible.builtin.set_fact:
+        confd_join_user: "{{ confd_join_username | default('bsradmin') }}"
+        confd_join_pwd: >-
+          {{ (sensitive | default({})).confd_join_password
+             | default(confd_join_password | default(lookup('ansible.builtin.file',
+               playbook_dir ~ '/bsradminpass', errors='ignore') | default('', true))) }}
+      no_log: true
+
+    - name: Require a confd join password
+      ansible.builtin.assert:
+        that: confd_join_pwd | length > 0
+        fail_msg: >-
+          Joining the confd cluster needs the password of {{ confd_join_user }} on
+          the leader: set confd_join_password in sensitive/creds.yaml, or create
+          the bsradminpass file.
+        quiet: true
+
+# The second node joins first, then the witness instance, so the leader
+# admits one member at a time. The password reaches confadm on standard
+# input and from there its environment, never a command line (Ansible's
+# `environment:` would put it on one), and the task's own output is hidden;
+# a failure is reported by the task after it, without the password.
+- name: Join the second HA node to its pair's confd cluster
+  ansible.builtin.shell:
+    cmd: |
+      IFS= read -r JOIN_PWD
+      export JOIN_PWD
+      exec /usr/racktop/sbin/confadm --instance 0 join \
+        --url {{ ('https://' ~ confd_leader_ip ~ ':8443') | quote }} \
+        --username {{ confd_join_user | quote }} --yes
+    stdin: "{{ confd_join_pwd }}"
+  register: confd_join_node
+  no_log: true
+  failed_when: false
+  when:
+    - is_not_witness
+    - not confd_is_leader
+    - not confd_joined
+
+- name: Report a failed join of the second HA node
+  ansible.builtin.fail:
+    msg: >-
+      confadm join to {{ confd_leader }} ({{ confd_leader_ip }}) failed on
+      {{ inventory_hostname }}: {{ confd_join_node.stderr | default('') }}
+      {{ confd_join_node.stdout | default('') }}
+  when:
+    - confd_join_node is not skipped
+    - confd_join_node.rc | default(0) != 0
+
+- name: Join the witness instance to its pair's confd cluster
+  ansible.builtin.shell:
+    cmd: |
+      IFS= read -r JOIN_PWD
+      export JOIN_PWD
+      exec /usr/racktop/sbin/confadm --instance {{ confd_instance | int }} join \
+        --url {{ ('https://' ~ confd_leader_ip ~ ':8443') | quote }} \
+        --username {{ confd_join_user | quote }} --yes
+    stdin: "{{ confd_join_pwd }}"
+  register: confd_join_witness
+  no_log: true
+  failed_when: false
+  when:
+    - is_witness
+    - not confd_joined
+
+- name: Report a failed join of the witness instance
+  ansible.builtin.fail:
+    msg: >-
+      confadm join (instance {{ confd_instance }}) to {{ confd_leader }}
+      ({{ confd_leader_ip }}) failed on {{ inventory_hostname }}:
+      {{ confd_join_witness.stderr | default('') }} {{ confd_join_witness.stdout | default('') }}
+  when:
+    - confd_join_witness is not skipped
+    - confd_join_witness.rc | default(0) != 0
+
+# Checked on each pair's leader: three voting members (both nodes and the
+# witness), none still a learner.
+- name: Wait for each pair's confd cluster to have three members
+  ansible.builtin.command:
+    argv: [/usr/racktop/sbin/confadm, --json, --instance, "0", member, show, all]
+  register: confd_members_after
+  changed_when: false
+  check_mode: false
+  until: >-
+    confd_members_after.rc == 0 and
+    (confd_members_after.stdout | from_json | default([], true) | length) >= 3 and
+    (confd_members_after.stdout | from_json | default([], true) | selectattr('IsLearner') | list | length) == 0
+  retries: 30
+  delay: 10
+  when: confd_is_leader

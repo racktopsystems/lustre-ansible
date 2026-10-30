@@ -115,6 +115,10 @@
     # hiavd configuration
     - import_tasks: tasks/ha-setup.yml
 
+    # confd cluster of each HA pair: the first HA node leads, the second
+    # node and the pair's witness instance join it
+    - import_tasks: tasks/confd-cluster.yml
+
     #
     # Tasks for configuring Infiniband interfaces
     # - import_tasks: tasks/ib-setup.yml

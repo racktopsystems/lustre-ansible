@@ -127,16 +127,67 @@
         mode: "0755"
       register: hiavd_config_dir_exists_result
 
-    - name: Generate {{ hiavd_identifiers_file }}
+    # hiavd keeps the cluster IDs and this node's keypair in identifiers.dat
+    # and rewrites hiavd.conf in its own format, so neither file is compared
+    # byte for byte with what Ansible would write (that differs on every run,
+    # and rewriting restarts hiavd and, for identifiers.dat, discards the
+    # node's identity). See filter_plugins/hiavd_filters.py.
+    - name: Read {{ hiavd_identifiers_file }}
+      ansible.builtin.slurp:
+        src: "{{ hiavd_identifiers_file }}"
+      register: hiavd_ids_current
+      failed_when: false
+
+    # The cluster IDs must never change once the cluster exists, so they are
+    # written only where there are none yet (a new node, or a file holding
+    # only the keypair hiavd created), keeping any keypair. Set
+    # hiavd_force_config_recreation to replace differing IDs as well.
+    - name: Decide whether {{ hiavd_identifiers_file }} needs the cluster IDs
+      ansible.builtin.set_fact:
+        hiavd_ids: >-
+          {{ (hiavd_ids_current.content | default('') | b64decode)
+             | hiavd_ids_plan(reg_cluster_guid.guid_hash, reg_cluster_guid.guid,
+                              hiavd_force_config_recreation | bool) }}
+
+    - name: Report cluster IDs that differ from the computed ones
+      ansible.builtin.debug:
+        msg: >-
+          {{ hiavd_identifiers_file }} already holds cluster IDs that differ from
+          the ones computed from the HA node UUIDs. They were left unchanged,
+          since changing them disrupts the cluster. Set
+          hiavd_force_config_recreation=true to replace them.
+      when:
+        - hiavd_ids.mismatch
+        - not hiavd_ids.write
+
+    - name: Write the cluster IDs to {{ hiavd_identifiers_file }}
       ansible.builtin.copy:
-        content: '{"ClusterId": {{ reg_cluster_guid.guid_hash }}, "ClusterGuid": "{{ reg_cluster_guid.guid }}"}'
+        content: "{{ hiavd_ids.content }}"
         dest: "{{ hiavd_identifiers_file }}"
+        owner: root
+        group: root
+        mode: "0600"
+      when: hiavd_ids.write
       register: render_identifiers_result
 
+    - name: Read {{ hiavd_config_file }}
+      ansible.builtin.slurp:
+        src: "{{ hiavd_config_file }}"
+      register: hiavd_conf_current
+      failed_when: false
+
+    # Written only when a setting the template sets differs from the file on
+    # the node, or hiavd_force_config_recreation is set. Header comments
+    # (copyright year, hiavd version), the order of the cluster nodes and
+    # settings hiavd adds itself do not count as differences.
     - name: Generate hiavd configuration file
       ansible.builtin.template:
         dest: "{{ hiavd_config_file }}"
         src: templates/etc/racktop/hiavd/hiavd.conf.j2
+      when: >-
+        (hiavd_force_config_recreation | bool) or
+        ((hiavd_conf_current.content | default('') | b64decode)
+         | hiavd_conf_differs(lookup('ansible.builtin.template', 'templates/etc/racktop/hiavd/hiavd.conf.j2')))
       register: render_hiavd_config_result
 
     # After initial generation this state file will be mutated by hiavd.

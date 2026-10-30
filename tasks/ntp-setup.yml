@@ -1,6 +1,55 @@
 ---
-- name: Configure NTP servers
-  ansible.builtin.template:
-    src: templates/etc/chrony.conf.j2
-    dest: /tmp/chrony.conf
+# Point chrony at the site's NTP servers.
+#
+# ntp_servers lists them as hostnames or IP addresses. Set it in the
+# inventory (under `all: vars:`, a group, or a host), in
+# group_vars/lustre_nodes, or with -e (a comma-separated string works there:
+# -e ntp_servers=10.2.26.1,10.2.26.2). Unset, ntp_servers_default from
+# group_vars/all is used. ntp_server_options (default "iburst") is added to
+# every server line.
+#
+# Only the time sources in /etc/chrony.conf are managed: every `server` and
+# `pool` line is replaced by one `server` line per entry, in a marked block,
+# and everything else in the file (including any hardening settings such as
+# `port 0` or `cmdport 0`) is kept.
+
+- name: Collect the NTP servers
+  vars:
+    given: "{{ ntp_servers | default(ntp_servers_default) }}"
+  ansible.builtin.set_fact:
+    ntp_server_list: >-
+      {{ (given.split(',') if given is string else given)
+         | map('string') | map('trim') | reject('eq', '') | list }}
+
+- name: Validate the NTP servers
+  ansible.builtin.assert:
+    that:
+      - ntp_server_list | length > 0
+      - ntp_server_list | reject('match', '^[A-Za-z0-9][A-Za-z0-9.:-]*$') | list | length == 0
+    fail_msg: >-
+      ntp_servers must list at least one NTP server as a hostname or IP
+      address; got {{ ntp_server_list }}.
+    quiet: true
+
+- name: Read /etc/chrony.conf
+  ansible.builtin.slurp:
+    src: /etc/chrony.conf
+  register: chrony_conf_current
+
+- name: Configure chrony with the NTP servers
+  ansible.builtin.copy:
+    dest: /etc/chrony.conf
+    content: >-
+      {{ chrony_conf_current.content | b64decode
+         | chrony_with_servers(ntp_server_list, ntp_server_options | default('iburst')) }}
+    owner: root
+    group: root
+    mode: "0644"
+    validate: chronyd -p -f %s
   notify: Restart NTP
+
+- name: Ensure chronyd is enabled and running
+  ansible.builtin.systemd_service:
+    name: chronyd
+    enabled: true
+    state: started

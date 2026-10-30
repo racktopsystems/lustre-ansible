@@ -4,6 +4,15 @@
 # MUST be named ossnode1, ossnode2, mdsnode1 and mdsnode2. The real address of
 # each host is supplied with ansible_host.
 
+# Settings for every host.
+all:
+  vars:
+    # NTP servers chrony synchronizes with, as hostnames or IP addresses.
+    # Without this, public pool.ntp.org servers are used.
+    ntp_servers:
+      - 10.100.100.250
+      - ntp2.example.local
+
 # Lustre clients. Not configured by global-playbook.yml.
 clients:
   hosts:

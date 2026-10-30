@@ -1,4 +1,24 @@
 ---
+# Set the hostname from the inventory. A changed hostname takes effect for
+# every service only after a reboot, so the host is rebooted, the playbook
+# waits for it to come back, and its facts are gathered again so the rest
+# of the playbook (the hiavd configuration in particular) uses the new name.
 - name: Set the system hostname
-  hostname:
+  ansible.builtin.hostname:
     name: "{{ hostname }}"
+  register: hostname_result
+
+- name: Reboot to apply the new hostname
+  when: hostname_result is changed
+  block:
+    # ansible.builtin.reboot waits until the host answers over SSH again.
+    # Servers can take a long time to pass firmware and storage
+    # initialisation, so allow 30 minutes; set hostname_reboot_timeout to
+    # change that.
+    - name: Reboot {{ inventory_hostname }} and wait for it to come back
+      ansible.builtin.reboot:
+        msg: "Rebooting to apply the new hostname {{ hostname }}"
+        reboot_timeout: "{{ hostname_reboot_timeout | default(1800) }}"
+
+    - name: Gather facts again after the reboot
+      ansible.builtin.setup:

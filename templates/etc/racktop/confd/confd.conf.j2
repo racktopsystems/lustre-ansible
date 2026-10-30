@@ -1,22 +1,4 @@
-# Copyright 2025 RackTop Systems, Inc.
-# Name: confd
-# Version: {{ ansible_facts.hiavd.version }}
-
 DatabaseDir = "/var/racktop/confd"
 DatabaseWalDir = ""
-QuotaBytes = 8589934592
-MaxReqBytes = 2097152
-DatabaseDebug = false
-PeerUrlOverride = ""
-ClientUrlOverride = ""
-CompactEvery = "00:30:00"
-SpaceCheck = "1.00:00:00"
 ClientInterfaceIgnoreList = ["^havnic*", "^hb*", "^data*", "^ib*", "^{{ hb_iface }}$"]
 PeerInterfaceIncludeList = ["^{{ admin_iface }}$"]
-IgnoreDhcpWarning = false
-DisableAutoJoin = false
-ClusterStateCheckInterval = "00:00:00"
-ClusterStateCheckTimeout = "00:00:00"
-ClusterStateDialTimeout = "00:00:00"
-DbSnapRetention = "7.00:00:00"
-DbSnapInterval = "1.00:00:00"

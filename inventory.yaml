@@ -1,6 +1,13 @@
 # Stennis site inventory. Values marked TODO must be confirmed before running.
 # See inventory.yaml.example for documentation of each field.
 
+# Settings for every host.
+all:
+  vars:
+    ntp_servers:
+      - time.nist.gov
+      - tick.usno.navy.mil
+
 clients:
   hosts:
     client1:
@@ -90,6 +97,9 @@ mds:
       - pool: mgs01
         dataset: mgsmdt01
         role: mgsmdt
+        # The file system's first MDT must be index 0; without this the
+        # index would come from the dataset name (mgsmdt01 -> 1).
+        index: 0
 
 # TODO: confirm lustre-stennis-witness1 (10.2.26.15) is the HA witness for
 # both pairs.
