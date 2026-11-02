@@ -17,8 +17,8 @@
 # Nothing is done while neither kmip_host nor kmip_zone is set, so
 # sites without a key manager are unaffected; setting only one of them stops
 # the run. A server without all three certificate files in the repository is
-# skipped, with a note saying which are missing, and left unchanged. keymgrd is restarted (handler "Restart keymgrd") when any of these
-# change.
+# skipped, with a note saying which are missing, and left unchanged.
+# keymgrd is restarted right after any certificate file or setting changes.
 
 - name: Report that the key manager is not configured
   ansible.builtin.debug:
@@ -90,7 +90,7 @@
       loop: "{{ keymgr_files }}"
       loop_control:
         label: "{{ item.name }}"
-      notify: Restart keymgrd
+      register: keymgr_files_result
       when: keymgr_missing_files | length == 0
 
     # Values are written as quoted strings; to_json escapes any quotes or
@@ -106,5 +106,16 @@
         - {key: KmipZone, value: "{{ kmip_zone }}"}
       loop_control:
         label: "{{ item.key }}"
-      notify: Restart keymgrd
+      register: keymgr_conf_result
       when: keymgr_missing_files | length == 0
+
+    # Restarted here, as soon as the new files and settings are in place,
+    # rather than by a handler at the end of the play, so keymgrd is never
+    # left running with the old configuration if a later task fails.
+    - name: Restart keymgrd to apply the new certificates or settings
+      ansible.builtin.systemd_service:
+        name: keymgrd
+        state: restarted
+      when:
+        - keymgr_missing_files | length == 0
+        - keymgr_files_result is changed or keymgr_conf_result is changed
