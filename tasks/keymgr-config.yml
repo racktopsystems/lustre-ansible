@@ -8,12 +8,13 @@
 #      inputs/keymgr/<inventory name>/clientkey.pem  (client private key)
 #      inputs/keymgr/<inventory name>/clientcert.pem (client certificate)
 #    to /etc/racktop/keymgrd/ on that server.
-# 2. Sets Type, KmipHost and KmipZone in /etc/racktop/keymgrd/keymgrd.conf.
-#    KmipHost and KmipZone come from fortanix_host and fortanix_zone, set
+# 2. Sets Type, KmipHost and KmipZone in /etc/racktop/keymgrd/keymgrd.conf
+#    from kmip_type (default Fornetix, the keymgrd type for a KMIP key
+#    manager), kmip_host and kmip_zone, set
 #    under `all: vars:` in the inventory. Every other setting in the file is
 #    left as it is.
 #
-# Nothing is done while neither fortanix_host nor fortanix_zone is set, so
+# Nothing is done while neither kmip_host nor kmip_zone is set, so
 # sites without a key manager are unaffected; setting only one of them stops
 # the run. keymgrd is restarted (handler "Restart keymgrd") when any of these
 # change.
@@ -21,18 +22,17 @@
 - name: Report that the key manager is not configured
   ansible.builtin.debug:
     msg: >-
-      fortanix_host and fortanix_zone are not set, so keymgrd is left
+      kmip_host and kmip_zone are not set, so keymgrd is left
       unchanged. Set both under `all: vars:` in the inventory to configure it.
   when:
-    - fortanix_host is not defined
-    - fortanix_zone is not defined
+    - kmip_host is not defined
+    - kmip_zone is not defined
 
 - name: Configure keymgrd for KMIP
-  when: fortanix_host is defined or fortanix_zone is defined
+  when: kmip_host is defined or kmip_zone is defined
   vars:
     keymgr_conf_dir: /etc/racktop/keymgrd
     keymgr_config_file: "{{ keymgr_conf_dir }}/keymgrd.conf"
-    keymgr_type: Fornetix
     keymgr_inputs_dir: "{{ playbook_dir }}/inputs/keymgr/{{ inventory_hostname }}"
     keymgr_files:
       - {name: certauth.pem, mode: "0644"}
@@ -42,13 +42,13 @@
     - name: Validate the key manager settings
       ansible.builtin.assert:
         that:
-          - fortanix_host is defined
-          - fortanix_host | string | trim | length > 0
-          - fortanix_zone is defined
-          - fortanix_zone | string | trim | length > 0
+          - kmip_host is defined
+          - kmip_host | string | trim | length > 0
+          - kmip_zone is defined
+          - kmip_zone | string | trim | length > 0
         fail_msg: >-
-          Set both fortanix_host (the key manager's hostname or IP address) and
-          fortanix_zone under `all: vars:` in the inventory.
+          Set both kmip_host (the key manager's hostname or IP address) and
+          kmip_zone under `all: vars:` in the inventory.
         quiet: true
 
     - name: Check for this server's certificate files in the repository
@@ -91,9 +91,9 @@
         regexp: '^\s*{{ item.key }}\s*='
         line: "{{ item.key }} = {{ item.value | string | trim | to_json }}"
       loop:
-        - {key: Type, value: "{{ keymgr_type }}"}
-        - {key: KmipHost, value: "{{ fortanix_host }}"}
-        - {key: KmipZone, value: "{{ fortanix_zone }}"}
+        - {key: Type, value: "{{ kmip_type | default('Fornetix') }}"}
+        - {key: KmipHost, value: "{{ kmip_host }}"}
+        - {key: KmipZone, value: "{{ kmip_zone }}"}
       loop_control:
         label: "{{ item.key }}"
       notify: Restart keymgrd

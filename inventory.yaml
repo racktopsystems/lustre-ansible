@@ -7,8 +7,8 @@ all:
     ntp_servers:
       - time.nist.gov
       - tick.usno.navy.mil
-    fortanix_host: kms.example.local
-    fortanix_zone: lustre
+    kmip_host: kms.example.local
+    kmip_zone: lustre
 
 clients:
   hosts:

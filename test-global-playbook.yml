@@ -93,7 +93,7 @@
         - perform_registration | default(false)
         - is_not_witness
 
-    # Point keymgrd at the KMIP key manager (fortanix_host/fortanix_zone);
+    # Point keymgrd at the KMIP key manager (kmip_host/kmip_zone);
     # skipped while those are not set.
     - import_tasks: tasks/keymgr-config.yml
       when:

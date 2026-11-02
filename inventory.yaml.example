@@ -14,8 +14,8 @@ all:
       - ntp2.example.local
     # KMIP key manager used by tasks/keymgr-config.yml: its hostname or IP
     # address, and the zone keys are kept in. Leave both unset to skip it.
-    fortanix_host: kms.example.local
-    fortanix_zone: lustre
+    kmip_host: kms.example.local
+    kmip_zone: lustre
 
 # Lustre clients. Not configured by global-playbook.yml.
 clients:
