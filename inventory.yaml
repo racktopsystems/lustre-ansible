@@ -10,16 +10,6 @@ all:
     kmip_host: https://10.2.26.58:5696
     kmip_zone: BrickStorSPL
 
-clients:
-  hosts:
-    client1:
-      ansible_host: 10.2.26.10
-      default_gw_ipaddr: 10.2.26.254
-      hostname: lustre-stennis-client1
-      ipmi_ipaddr: 10.2.11.10
-      ipmi_netmask: 255.255.255.0
-      mgmt_iface: ens259f0
-
 oss:
   hosts:
     ossnode1:
@@ -103,8 +93,6 @@ mds:
         # index would come from the dataset name (mgsmdt01 -> 1).
         index: 0
 
-# TODO: confirm lustre-stennis-witness1 (10.2.26.15) is the HA witness for
-# both pairs.
 cluster_witness:
   hosts:
     witness-oss:
