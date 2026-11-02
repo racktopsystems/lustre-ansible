@@ -16,7 +16,8 @@
 #
 # Nothing is done while neither kmip_host nor kmip_zone is set, so
 # sites without a key manager are unaffected; setting only one of them stops
-# the run. keymgrd is restarted (handler "Restart keymgrd") when any of these
+# the run. A server without all three certificate files in the repository is
+# skipped, with a note saying which are missing, and left unchanged. keymgrd is restarted (handler "Restart keymgrd") when any of these
 # change.
 
 - name: Report that the key manager is not configured
@@ -52,16 +53,23 @@
         quiet: true
 
     - name: Check for this server's certificate files in the repository
-      ansible.builtin.assert:
-        that: (keymgr_inputs_dir ~ '/' ~ item.name) is file
-        fail_msg: >-
-          {{ keymgr_inputs_dir }}/{{ item.name }} is missing. Each server needs
-          certauth.pem, clientkey.pem and clientcert.pem in
-          inputs/keymgr/{{ inventory_hostname }}/.
-        quiet: true
-      loop: "{{ keymgr_files }}"
-      loop_control:
-        label: "{{ item.name }}"
+      ansible.builtin.set_fact:
+        keymgr_missing_files: >-
+          {{ keymgr_files | map(attribute='name')
+             | reject('in', keymgr_present_files) | list }}
+      vars:
+        keymgr_present_files: >-
+          {{ keymgr_files | map(attribute='name')
+             | map('regex_replace', '^', keymgr_inputs_dir ~ '/')
+             | select('file') | map('basename') | list }}
+
+    - name: Report a server skipped for lack of certificate files
+      ansible.builtin.debug:
+        msg: >-
+          Skipping keymgrd on {{ inventory_hostname }}: inputs/keymgr/{{
+          inventory_hostname }}/ lacks {{ keymgr_missing_files | join(', ') }}.
+          Add certauth.pem, clientkey.pem and clientcert.pem there to configure it.
+      when: keymgr_missing_files | length > 0
 
     - name: Ensure {{ keymgr_conf_dir }} exists
       ansible.builtin.file:
@@ -70,6 +78,7 @@
         owner: root
         group: root
         mode: "0755"
+      when: keymgr_missing_files | length == 0
 
     - name: Install the KMIP certificate files
       ansible.builtin.copy:
@@ -82,6 +91,7 @@
       loop_control:
         label: "{{ item.name }}"
       notify: Restart keymgrd
+      when: keymgr_missing_files | length == 0
 
     # Values are written as quoted strings; to_json escapes any quotes or
     # backslashes the way the config file's string syntax expects.
@@ -97,3 +107,4 @@
       loop_control:
         label: "{{ item.key }}"
       notify: Restart keymgrd
+      when: keymgr_missing_files | length == 0
