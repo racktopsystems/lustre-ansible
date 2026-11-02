@@ -7,8 +7,8 @@ all:
     ntp_servers:
       - time.nist.gov
       - tick.usno.navy.mil
-    kmip_host: kms.example.local
-    kmip_zone: lustre
+    kmip_host: https://10.2.26.58:5696
+    kmip_zone: BrickStorSPL
 
 clients:
   hosts:
