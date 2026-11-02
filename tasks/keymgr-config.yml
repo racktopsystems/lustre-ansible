@@ -1,0 +1,99 @@
+---
+# Configure keymgrd on the Lustre servers (the oss and mds HA pairs) to use a
+# KMIP key manager. Imported by global-playbook.yml after registration, for
+# the HA nodes only.
+#
+# 1. Installs each server's KMIP certificates from the repository:
+#      inputs/keymgr/<inventory name>/certauth.pem   (CA certificate)
+#      inputs/keymgr/<inventory name>/clientkey.pem  (client private key)
+#      inputs/keymgr/<inventory name>/clientcert.pem (client certificate)
+#    to /etc/racktop/keymgrd/ on that server.
+# 2. Sets Type, KmipHost and KmipZone in /etc/racktop/keymgrd/keymgrd.conf.
+#    KmipHost and KmipZone come from fortanix_host and fortanix_zone, set
+#    under `all: vars:` in the inventory. Every other setting in the file is
+#    left as it is.
+#
+# Nothing is done while neither fortanix_host nor fortanix_zone is set, so
+# sites without a key manager are unaffected; setting only one of them stops
+# the run. keymgrd is restarted (handler "Restart keymgrd") when any of these
+# change.
+
+- name: Report that the key manager is not configured
+  ansible.builtin.debug:
+    msg: >-
+      fortanix_host and fortanix_zone are not set, so keymgrd is left
+      unchanged. Set both under `all: vars:` in the inventory to configure it.
+  when:
+    - fortanix_host is not defined
+    - fortanix_zone is not defined
+
+- name: Configure keymgrd for KMIP
+  when: fortanix_host is defined or fortanix_zone is defined
+  vars:
+    keymgr_conf_dir: /etc/racktop/keymgrd
+    keymgr_config_file: "{{ keymgr_conf_dir }}/keymgrd.conf"
+    keymgr_type: Fornetix
+    keymgr_inputs_dir: "{{ playbook_dir }}/inputs/keymgr/{{ inventory_hostname }}"
+    keymgr_files:
+      - {name: certauth.pem, mode: "0644"}
+      - {name: clientkey.pem, mode: "0600"}
+      - {name: clientcert.pem, mode: "0644"}
+  block:
+    - name: Validate the key manager settings
+      ansible.builtin.assert:
+        that:
+          - fortanix_host is defined
+          - fortanix_host | string | trim | length > 0
+          - fortanix_zone is defined
+          - fortanix_zone | string | trim | length > 0
+        fail_msg: >-
+          Set both fortanix_host (the key manager's hostname or IP address) and
+          fortanix_zone under `all: vars:` in the inventory.
+        quiet: true
+
+    - name: Check for this server's certificate files in the repository
+      ansible.builtin.assert:
+        that: (keymgr_inputs_dir ~ '/' ~ item.name) is file
+        fail_msg: >-
+          {{ keymgr_inputs_dir }}/{{ item.name }} is missing. Each server needs
+          certauth.pem, clientkey.pem and clientcert.pem in
+          inputs/keymgr/{{ inventory_hostname }}/.
+        quiet: true
+      loop: "{{ keymgr_files }}"
+      loop_control:
+        label: "{{ item.name }}"
+
+    - name: Ensure {{ keymgr_conf_dir }} exists
+      ansible.builtin.file:
+        path: "{{ keymgr_conf_dir }}"
+        state: directory
+        owner: root
+        group: root
+        mode: "0755"
+
+    - name: Install the KMIP certificate files
+      ansible.builtin.copy:
+        src: "{{ keymgr_inputs_dir }}/{{ item.name }}"
+        dest: "{{ keymgr_conf_dir }}/{{ item.name }}"
+        owner: root
+        group: root
+        mode: "{{ item.mode }}"
+      loop: "{{ keymgr_files }}"
+      loop_control:
+        label: "{{ item.name }}"
+      notify: Restart keymgrd
+
+    # Values are written as quoted strings; to_json escapes any quotes or
+    # backslashes the way the config file's string syntax expects.
+    - name: Set the key manager in {{ keymgr_config_file }}
+      ansible.builtin.lineinfile:
+        path: "{{ keymgr_config_file }}"
+        regexp: '^\s*{{ item.key }}\s*='
+        line: "{{ item.key }} = {{ item.value | string | trim | to_json }}"
+      loop:
+        - {key: Type, value: "{{ keymgr_type }}"}
+        - {key: KmipHost, value: "{{ fortanix_host }}"}
+        - {key: KmipZone, value: "{{ fortanix_zone }}"}
+      loop_control:
+        label: "{{ item.key }}"
+      notify: Restart keymgrd

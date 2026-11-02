@@ -49,6 +49,12 @@
         - perform_registration | default(true)
         - is_not_witness
 
+    # Point keymgrd at the KMIP key manager (fortanix_host/fortanix_zone);
+    # skipped while those are not set.
+    - import_tasks: tasks/keymgr-config.yml
+      when:
+        - is_not_witness
+
     # Collect information about the IPMI if supported.
     - name: Gather custom IPMI facts
       ipmi_facts:
