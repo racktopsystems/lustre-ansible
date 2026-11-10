@@ -43,6 +43,9 @@ lustreadm_bin: /usr/racktop/sbin/lustreadm
 #       default is on).
 #   lnet_prune_networks: false  Remove LNET networks that are configured
 #       but not in lnet_networks.
+#   lnet_link_wait_timeout: 120  Seconds lnet.service waits at boot for the
+#       interfaces in lnet_networks to have a link before it imports
+#       /etc/lnet.conf; LNET then starts even if some still have none.
 #
 # None of these is defined here, because a variable in group_vars/all takes
 # precedence over group variables in the inventory file; the tasks supply

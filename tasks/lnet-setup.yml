@@ -2,7 +2,8 @@
 # LNET networks and Multi-Rail peers, managed through lustred with lustreadm,
 # which also persists the running configuration to /etc/lnet.conf. See the
 # LNET section of group_vars/all for lnet_networks, lnet_manage_peers,
-# lnet_extra_peers, lnet_discovery and lnet_prune_networks.
+# lnet_extra_peers, lnet_discovery, lnet_prune_networks and
+# lnet_link_wait_timeout.
 #
 # Network names and NIDs are compared in canonical form (filter_plugins/
 # lnet_filters.py): LNET calls instance 0 "o2ib" rather than "o2ib0".
@@ -43,6 +44,48 @@
       on this host ({{ ansible_interfaces | sort | join(', ') }}). Got:
       {{ lnet_desired | map(attribute='name') | zip(lnet_desired | map(attribute='ifaces')) | list }}
     quiet: true
+
+# lnet.service imports /etc/lnet.conf at boot as soon as the network is
+# "online", which for IPoIB is before the InfiniBand port is active. A
+# network created then stays down after the link comes up, so make the
+# import wait for the links of LNET's interfaces.
+- name: Make lnet.service wait for the links of its interfaces
+  vars:
+    lnet_link_ifaces: "{{ lnet_desired | map(attribute='ifaces') | flatten }}"
+  when: lnet_link_ifaces | length > 0
+  block:
+    - name: Install the LNET link wait script
+      ansible.builtin.template:
+        src: templates/usr/local/sbin/lnet-wait-link.j2
+        dest: /usr/local/sbin/lnet-wait-link
+        owner: root
+        group: root
+        mode: "0755"
+
+    - name: Ensure the lnet.service drop-in directory exists
+      ansible.builtin.file:
+        path: /etc/systemd/system/lnet.service.d
+        state: directory
+        owner: root
+        group: root
+        mode: "0755"
+
+    - name: Run the LNET link wait before lnet.service imports its configuration
+      ansible.builtin.copy:
+        dest: /etc/systemd/system/lnet.service.d/wait-link.conf
+        owner: root
+        group: root
+        mode: "0644"
+        content: |
+          # {{ ansible_managed }}
+          [Service]
+          ExecStartPre=/usr/local/sbin/lnet-wait-link
+      register: lnet_wait_link_dropin
+
+    - name: Reload systemd after changing the lnet.service drop-in
+      ansible.builtin.systemd_service:
+        daemon_reload: true
+      when: lnet_wait_link_dropin is changed
 
 - name: List LNET networks
   ansible.builtin.command:

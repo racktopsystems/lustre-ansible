@@ -1,0 +1,23 @@
+#!/bin/sh
+# {{ ansible_managed }}
+#
+# Run by lnet.service (drop-in wait-link.conf) before it imports
+# /etc/lnet.conf. Waits until every interface LNET uses has a link, so that
+# networks are not created while an InfiniBand port is still coming up; a
+# network created then stays down. An interface still without a link after
+# the timeout is logged, and LNET starts anyway.
+
+timeout={{ lnet_link_wait_timeout | default(120) | int }}
+ifaces="{{ lnet_link_ifaces | join(' ') }}"
+
+deadline=$(( $(date +%s) + timeout ))
+for iface in $ifaces; do
+    while [ "$(cat "/sys/class/net/$iface/carrier" 2>/dev/null)" != 1 ]; do
+        if [ "$(date +%s)" -ge "$deadline" ]; then
+            echo "lnet-wait-link: $iface has no link after ${timeout}s, starting LNET anyway" >&2
+            continue 2
+        fi
+        sleep 1
+    done
+done
+exit 0
