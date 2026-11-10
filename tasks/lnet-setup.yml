@@ -77,7 +77,7 @@
         group: root
         mode: "0644"
         content: |
-          # {{ ansible_managed }}
+          # Managed by lustre-ansible (tasks/lnet-setup.yml).
           [Service]
           ExecStartPre=/usr/local/sbin/lnet-wait-link
       register: lnet_wait_link_dropin
