@@ -9,6 +9,9 @@ all:
       - tick.usno.navy.mil
     kmip_host: https://10.2.26.58:5696
     kmip_zone: BrickStorSPL
+    # Name of the Lustre file system. The existing targets were formatted
+    # as lustrefs (lustrefs-MDT0000, lustrefs-OST0000).
+    filesystem_name: lustrefs
 
 oss:
   hosts:
@@ -49,6 +52,9 @@ oss:
       - pool: oss01
         dataset: ost01
         role: ost
+        # The OST was formatted as index 0 (lustrefs-OST0000); without this
+        # the index would come from the dataset name (ost01 -> 1).
+        index: 0
 
 mds:
   hosts:
