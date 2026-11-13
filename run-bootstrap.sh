@@ -13,9 +13,16 @@ if [ ! -f "$inventory" ]; then
 	exit 1
 fi
 
+passfile=bsradminpass
+if [ ! -f "$passfile" ]; then
+	echo "$0: become password file '$passfile' does not exist;" \
+	    "create it containing the bsradmin password" >&2
+	exit 1
+fi
+
 exec ansible-playbook \
 	-u bsradmin \
-	--become-password-file bsradminpass \
+	--become-password-file "$passfile" \
 	-v \
 	-i "$inventory" \
 	bootstrap-keys.yml
