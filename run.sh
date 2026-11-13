@@ -4,5 +4,5 @@ ansible-playbook \
 	-u bsradmin \
 	--become-password-file bsradminpass \
 	-v \
-	-i inventory.yaml \
+	-i inventory.yml \
 	global-playbook.yml

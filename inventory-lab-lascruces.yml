@@ -1,0 +1,132 @@
+# Las Cruces lab inventory. Values marked TODO must be confirmed before running.
+# See inventory.yaml.example for documentation of each field.
+#
+# Source: Confluence "Lustre Lab Environment - Las Cruces" (PT space).
+# Interface names, pool and target layout, the file system name and the KMIP
+# settings are not documented there; those values follow the Stennis lab and
+# are marked TODO.
+
+# Settings for every host.
+all:
+  vars:
+    ntp_servers:
+      - time.nist.gov
+      - tick.usno.navy.mil
+    # TODO: no KMIP server is documented for this lab. keymgr configuration
+    # is skipped while both of these are unset.
+    # kmip_host: https://10.2.26.58:5696
+    # kmip_zone: BrickStorSPL
+    # TODO: confirm the file system name if targets already exist.
+    filesystem_name: lustrefs
+
+oss:
+  hosts:
+    ossnode1:
+      ansible_host: 10.2.26.1
+      license_file: inputs/registration/QA000018.oreg
+      hostname: lustre-lc-oss1
+      first_ha_node: true
+      ha_peer_ipaddr: 10.2.26.2
+      admin_iface: ens259f0 # TODO: confirm
+      hb_iface: ens259f1 # TODO: confirm
+      hb_iface_ipaddr: 192.255.0.1/24
+      ipmi_ip_address: 10.2.10.15
+      configure_ipmi: false
+      ib_addrs:
+        ib0: 192.168.2.1/24
+        ib1: null
+
+    ossnode2:
+      ansible_host: 10.2.26.2
+      license_file: inputs/registration/QA000019.oreg
+      hostname: lustre-lc-oss2
+      first_ha_node: false
+      ha_peer_ipaddr: 10.2.26.1
+      admin_iface: ens259f0 # TODO: confirm
+      hb_iface: ens259f1 # TODO: confirm
+      hb_iface_ipaddr: 192.255.0.2/24
+      ipmi_ip_address: 10.2.10.16
+      configure_ipmi: false
+      ib_addrs:
+        ib0: 192.168.2.2/24
+        ib1: null
+  vars:
+    witness_instance: 0 # hiavd 4746, confd 2379/2380
+    # TODO: confirm pool and target names.
+    zpools:
+      - oss01
+    lustre_targets:
+      - pool: oss01
+        dataset: ost01
+        role: ost
+        # Without this the index would come from the dataset name (ost01 -> 1).
+        index: 0
+
+mds:
+  hosts:
+    mdsnode1:
+      ansible_host: 10.2.26.3
+      license_file: inputs/registration/QA00001C.oreg
+      hostname: lustre-lc-mgs1
+      first_ha_node: true
+      ha_peer_ipaddr: 10.2.26.4
+      admin_iface: ens259f0 # TODO: confirm
+      hb_iface: ens259f1 # TODO: confirm
+      hb_iface_ipaddr: 192.255.0.1/24
+      ipmi_ip_address: 10.2.10.18
+      configure_ipmi: false
+      ib_addrs:
+        ib0: 192.168.2.3/24
+        ib1: null
+
+    mdsnode2:
+      ansible_host: 10.2.26.4
+      license_file: inputs/registration/QA00001D.oreg
+      hostname: lustre-lc-mgs2
+      first_ha_node: false
+      ha_peer_ipaddr: 10.2.26.3
+      admin_iface: ens259f0 # TODO: confirm
+      hb_iface: ens259f1 # TODO: confirm
+      hb_iface_ipaddr: 192.255.0.2/24
+      # TODO: Confluence lists 10.2.11.19; every other Las Cruces BMC is
+      # on 10.2.10.x, so this may be a typo.
+      ipmi_ip_address: 10.2.11.19
+      configure_ipmi: false
+      ib_addrs:
+        ib0: 192.168.2.4/24
+        ib1: null
+  vars:
+    witness_instance: 1 # hiavd 4747, confd 2381/2382
+    # TODO: confirm pool and target names.
+    zpools:
+      - mgs01
+    lustre_targets:
+      - pool: mgs01
+        dataset: mgsmdt01
+        role: mgsmdt
+        # The file system's first MDT must be index 0; without this the
+        # index would come from the dataset name (mgsmdt01 -> 1).
+        index: 0
+
+# TODO: the documented Las Cruces witness (win-ent-witness, 10.2.26.6) is a
+# Windows 10 system. tasks/multicluster-witness.yml configures a Linux
+# ha-witness host over SSH, so this needs a Linux witness before the
+# playbooks can run against it.
+cluster_witness:
+  hosts:
+    witness-oss:
+      ansible_host: 10.2.26.6
+      hostname: win-ent-witness
+      role: oss
+      witness_instance: 0
+    witness-mds:
+      ansible_host: 10.2.26.6
+      hostname: win-ent-witness
+      role: mds
+      witness_instance: 1
+
+lustre_nodes:
+  children:
+    oss:
+    mds:
+    cluster_witness:
