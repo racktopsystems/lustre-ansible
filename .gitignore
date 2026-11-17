@@ -4,5 +4,4 @@ bsradminpass
 sensitive
 venv
 tmpssh/
-*.oreg
 inputs/keymgr/*/
