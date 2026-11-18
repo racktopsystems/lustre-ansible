@@ -188,6 +188,24 @@ $ ansible-playbook -u bsradmin --become-password-file bsradminpass -v -i invento
 
 Registration runs by default. To skip it, for example while the `.oreg` files are not yet available, add `-e perform_registration=false`.
 
+`run.sh` wraps that command: `bash run.sh <inventory-file>`, run from the root of this repository with the `bsradminpass` file in place. `run-bootstrap.sh` does the same for `bootstrap-keys.yml`.
+
+### fapolicyd on the control node
+On a hardened (STIG) control node, fapolicyd denies every process, root included, from opening a Python file that is not in its trust database. Ansible has to read this repository's own plugins in `library/`, `filter_plugins/` and `test_plugins/`, so without trust entries the run fails at the first custom module with `[Errno 1] Operation not permitted`, after warnings that the filter and test plugins were skipped.
+
+`run.sh` takes care of this. When fapolicyd is active it rebuilds `/etc/fapolicyd/trust.d/lustre-ansible` from the plugins' current contents with `fapolicyd-cli` (through `sudo`, using the `bsradminpass` file), reloads the trust database and waits until every plugin can be opened before it starts Ansible. Trust is pinned to each file's SHA-256, so edited, added and removed plugins are picked up on the next run. When running `ansible-playbook` directly instead, refresh the trust by hand first:
+
+```bash
+$ sudo fapolicyd-cli --file add "$PWD/library/" --trust-file lustre-ansible
+$ sudo fapolicyd-cli --file add "$PWD/filter_plugins/" --trust-file lustre-ansible
+$ sudo fapolicyd-cli --file add "$PWD/test_plugins/" --trust-file lustre-ansible
+$ sudo fapolicyd-cli --update
+```
+
+After editing plugins, `sudo fapolicyd-cli --file update --trust-file lustre-ansible && sudo fapolicyd-cli --update` refreshes the entries.
+
+`ansible.cfg` turns on pipelining for every connection type for the same reason: without it Ansible writes each module to an `AnsiballZ_*.py` file in `~/.ansible/tmp` and fapolicyd denies opening it.
+
 ### Key manager
 `tasks/keymgr-config.yml`, run by the global playbook right after registration, points keymgrd on the Lustre servers (the `oss` and `mds` pairs) at a KMIP key manager. It installs each server's `certauth.pem`, `clientkey.pem` (mode 0600) and `clientcert.pem` from `inputs/keymgr/<inventory name>/` to `/etc/racktop/keymgrd/`, and sets `Type`, `KmipHost` and `KmipZone` in `/etc/racktop/keymgrd/keymgrd.conf` from `kmip_type` (default `Fornetix`, the keymgrd type for a KMIP key manager), `kmip_host` and `kmip_zone` under `all: vars:` in the inventory, leaving every other setting in that file as it is. While neither `kmip_host` nor `kmip_zone` is set the step is skipped, and setting only one stops the run. A server that does not have all three certificate files in `inputs/keymgr/<inventory name>/` is skipped and left unchanged, with a note saying which files are missing. keymgrd is restarted only when a file or setting changed. The certificate folders are ignored by git, since they hold private keys.
 
