@@ -44,6 +44,14 @@ oss:
         ib1: null
     ossnode2:
       ansible_host: 192.168.10.3
+      # Only for a node whose bsradmin password is not the one in the
+      # bsradminpass file: its own password, encrypted with
+      #   ansible-vault encrypt_string --vault-password-file sensitive/vaultpass \
+      #       --name ansible_become_password '<password>'
+      # It is used for sudo, the bootstrap login, and confd joins to this node.
+      # ansible_become_password: !vault |
+      #   $ANSIBLE_VAULT;1.1;AES256
+      #   ...
       license_file: inputs/registration/ossnode2.oreg
       hostname: rhel8-oss2
       first_ha_node: false

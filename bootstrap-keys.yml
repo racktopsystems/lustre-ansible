@@ -10,6 +10,11 @@
 #   ansible-playbook -i inventory.yaml bootstrap-keys.yml
 #
 # Override the remote account with: -e bootstrap_user=<user>
+#
+# Each node is logged in to with its own bsradmin password when the inventory
+# gives it one (ansible_become_password, see README.md), otherwise with
+# bootstrap_password: the factory default unless set with
+# -e bootstrap_password=<password>.
 
 - name: Generate Ansible SSH key pair on the control node
   hosts: localhost
@@ -52,8 +57,9 @@
 
   vars:
     bootstrap_user: bsradmin
+    bootstrap_password: racktop1
     ansible_user: "{{ bootstrap_user }}"
-    ansible_password: racktop1
+    ansible_password: "{{ ansible_become_password | default(bootstrap_password) }}"
     # Force password auth so agent keys don't trigger "Too many authentication
     # failures", and accept host keys on first contact only.
     ansible_ssh_common_args: >-

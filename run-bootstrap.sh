@@ -20,9 +20,26 @@ if [ ! -f "$passfile" ]; then
 	exit 1
 fi
 
+# Per-host passwords in the inventory are encrypted with ansible-vault. Read
+# the vault password from sensitive/vaultpass when it exists (unless
+# ANSIBLE_VAULT_PASSWORD_FILE already names one), otherwise prompt for it
+# when the inventory or host_vars hold encrypted values.
+vaultfile=sensitive/vaultpass
+vaulted='^[^#]*(!vault|\$ANSIBLE_VAULT)'
+vault_args=
+if [ -n "$ANSIBLE_VAULT_PASSWORD_FILE" ]; then
+	:
+elif [ -f "$vaultfile" ]; then
+	vault_args="--vault-password-file $vaultfile"
+elif grep -qE "$vaulted" "$inventory" ||
+    { [ -d host_vars ] && grep -rqE "$vaulted" host_vars; }; then
+	vault_args=--ask-vault-pass
+fi
+
 exec ansible-playbook \
 	-u bsradmin \
 	--become-password-file "$passfile" \
+	$vault_args \
 	-v \
 	-i "$inventory" \
 	bootstrap-keys.yml

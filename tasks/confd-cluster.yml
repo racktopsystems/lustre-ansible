@@ -11,8 +11,10 @@
 #
 # The join needs a user with privileges on the leader: confd_join_username
 # (default bsradmin) and confd_join_password, read from sensitive/creds.yaml
-# when it is set there, otherwise from the bsradminpass file the playbook is
-# run with.
+# when it is set there. Otherwise, joining as bsradmin to a leader whose
+# bsradmin password is set per host (its ansible_become_password inventory
+# variable), it is that password, and in all other cases the contents of the
+# bsradminpass file the playbook is run with.
 
 - name: Work out this host's confd cluster
   vars:
@@ -211,13 +213,23 @@
         - (playbook_dir ~ '/sensitive/creds.yaml') is file
       no_log: true
 
+    # Without an explicit confd_join_password, bsradmin joins with the
+    # leader's bsradmin password, which can differ from this host's: the
+    # leader's per-host ansible_become_password when it has one. Any other
+    # case falls back to the bsradminpass file.
     - name: Choose the confd join credentials
+      vars:
+        join_user: "{{ confd_join_username | default('bsradmin') }}"
+        leader_pwd: >-
+          {{ (hostvars[confd_leader].ansible_become_password
+              if join_user == 'bsradmin' else none)
+             | default(lookup('ansible.builtin.file', playbook_dir ~ '/bsradminpass',
+               errors='ignore'), true) | default('', true) }}
       ansible.builtin.set_fact:
-        confd_join_user: "{{ confd_join_username | default('bsradmin') }}"
+        confd_join_user: "{{ join_user }}"
         confd_join_pwd: >-
           {{ (sensitive | default({})).confd_join_password
-             | default(confd_join_password | default(lookup('ansible.builtin.file',
-               playbook_dir ~ '/bsradminpass', errors='ignore') | default('', true))) }}
+             | default(confd_join_password | default(leader_pwd)) }}
       no_log: true
 
     - name: Require a confd join password
@@ -225,8 +237,9 @@
         that: confd_join_pwd | length > 0
         fail_msg: >-
           Joining the confd cluster needs the password of {{ confd_join_user }} on
-          the leader: set confd_join_password in sensitive/creds.yaml, or create
-          the bsradminpass file.
+          the leader {{ confd_leader }}: set confd_join_password in
+          sensitive/creds.yaml, set the leader's ansible_become_password in the
+          inventory, or create the bsradminpass file.
         quiet: true
 
 # The second node joins first, then the witness instance, so the leader

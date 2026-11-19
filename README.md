@@ -69,7 +69,38 @@ To bootstrap key-based authentication on freshly installed nodes, run the `boots
 $ ansible-playbook -i inventory.yaml bootstrap-keys.yml
 ```
 
-It is rather inconvenient to type in the password each time, which is required when `sudo` requires user to enter the password. Create a password file at the root of this checked out repository to avoid interactive prompting. _Please_ do not check this file into `git`. You may call it anything, but during development we called it `bsradminpass`. The password must be in plain text, thus make sure this file is not wide open. Set very restrictive permissions to limit access.
+The SSH key only logs in as `bsradmin`; root access is still through `sudo`, which asks for `bsradmin`'s password. (The RHEL 8 STIG requires a password for `sudo` and forbids `root` logins over SSH, so neither a `NOPASSWD` rule nor a key for `root` is an option.) It is rather inconvenient to type in the password each time, so create a password file at the root of this checked out repository to avoid interactive prompting. _Please_ do not check this file into `git`. You may call it anything, but during development we called it `bsradminpass`, and `run.sh` and `run-bootstrap.sh` expect that name. The password must be in plain text, thus make sure this file is not wide open. Set very restrictive permissions to limit access.
+
+##### Per-host passwords
+The `bsradminpass` file is the `bsradmin` password of every node that has no password of its own. A node whose `bsradmin` password is different gets it as `ansible_become_password` in the inventory, encrypted with `ansible-vault` so that the inventory can be shared without exposing it. One vault password protects all of them:
+
+```bash
+$ umask 077; printf '%s\n' '<vault password>' > sensitive/vaultpass
+$ ansible-vault encrypt_string --vault-password-file sensitive/vaultpass \
+    --name ansible_become_password '<bsradmin password of the node>'
+```
+
+Paste the output under the node in the inventory:
+
+```yaml
+    ossnode2:
+      ansible_host: 192.168.10.3
+      ansible_become_password: !vault |
+        $ANSIBLE_VAULT;1.1;AES256
+        6634...
+```
+
+(It can equally go in `host_vars/<inventory name>.yml`.) The node's own password then takes the place of `bsradminpass` everywhere that node's password is needed:
+
+- `sudo` on that node, including tasks other nodes delegate to it;
+- the SSH login of `bootstrap-keys.yml`, which uses the factory default password only for nodes without one (`-e bootstrap_password=<password>` changes that default);
+- the `confd` join to that node when it leads its pair's `confd` cluster (unless `confd_join_password` is set).
+
+A witness listed under two inventory names needs the password under both.
+
+`run.sh` and `run-bootstrap.sh` pass `sensitive/vaultpass` to Ansible as the vault password file when it exists (the `sensitive` directory is ignored by `git`), and otherwise prompt for the vault password when the inventory or `host_vars` hold encrypted values. Setting `ANSIBLE_VAULT_PASSWORD_FILE` overrides both. Running `ansible-playbook` directly, add `--vault-password-file sensitive/vaultpass` or `--ask-vault-pass`.
+
+The control node's own `sudo` (used by `run.sh` for fapolicyd, below) also reads `bsradminpass`.
 
 #### IPMI Credentials
 This is only relavant to physical systems. If any hosts in the Inventory configuration have `configure_ipmi: true`, then it is necessary to create a credentials file in the repository containing the password for the IPMI interface. The username for the IPMI user is set via the `group_vars/all` file and should normally not change. Adjust the value of `ipmi_username` as necessary. The password is very sensitive and must be handled carefully. Create a directory at the root of this repository called `sensitive` and place into it a file called `creds.yaml`. The contents of this file look as follows where the placeholder must be replaced with the password for the `ipmi_username` user.
@@ -129,7 +160,7 @@ Each HA pair has its own confd cluster of three members: the two nodes and the p
 
 Whether a member has joined is decided by the leader: it has joined only if the leader's cluster lists that member, so re-running the playbook does not rejoin anything. A witness instance that is still in some other cluster, typically the cluster of a pair that has since been reinstalled (same addresses, new cluster), is reset to a standalone confd and then joined to its pair's current cluster. That old cluster has lost its quorum, so the reset is done locally, the way confd itself leaves a cluster: the instance is stopped, its node data and `snapshots` directory are moved aside with a `.stale-<time>` suffix (instance N keeps them in `/var/racktop/confd_N`, instance 0 in its `DatabaseDir`, by default `/var/racktop/confd`), and it is started again. The second HA node is never reset automatically: if it is in another cluster the run stops, and it has to be removed from that cluster by hand (`confadm member remove`).
 
-The join authenticates on the leader as `confd_join_username` (default `bsradmin`). Its password is `confd_join_password` from `sensitive/creds.yaml` when set there, otherwise the contents of the `bsradminpass` file. It reaches `confadm` on standard input and from there its environment, never on a command line, and the join task's output is hidden.
+The join authenticates on the leader as `confd_join_username` (default `bsradmin`). Its password is `confd_join_password` from `sensitive/creds.yaml` when set there. Otherwise, joining as `bsradmin` to a leader that has its own password in the inventory (`ansible_become_password`, see [Per-host passwords](#per-host-passwords)), it is that password, and in every other case the contents of the `bsradminpass` file. It reaches `confadm` on standard input and from there its environment, never on a command line, and the join task's output is hidden.
 
 ### ZFS pools and HA
 The playbooks never import a pool. Each pool in a pair's `zpools` must already exist and be visible, exported, to both nodes of the pair (`hwadm ls p` lists it on each). The HA tasks put each pool in a resource group of its own, named after it (`p_ost01` becomes `RG_ost01`, `oss01` becomes `RG_oss01`), on the node with `first_ha_node: true`. hiavd then imports the pool on that node and moves it between the two nodes from then on. Before that, the first node checks that both nodes see each pool, running `hwadm` on each node as an ordinary task (no node logs in to its peer), and stops with the pools each node is missing. Only the first node creates the resource groups, so the two nodes never race to create the same one, and the playbook waits until hiavd reports each pool healthy before going on. A pool already in a resource group is left where it is, so re-running the playbook never moves a pool that has failed over.
