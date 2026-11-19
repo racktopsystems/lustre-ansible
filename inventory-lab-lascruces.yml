@@ -5,6 +5,14 @@
 # Interface names, pool and target layout, the file system name and the KMIP
 # settings are not documented there; those values follow the Stennis lab and
 # are marked TODO.
+#
+# bsradmin passwords: every node uses the one in the bsradminpass file unless
+# its entry below sets ansible_become_password. To give a node its own,
+# encrypt it and replace that node's commented line with the output:
+#   ansible-vault encrypt_string --vault-password-file sensitive/vaultpass \
+#       --name ansible_become_password '<bsradmin password of the node>'
+# Both witness entries share one host, so both need the same value. See
+# "Per-host passwords" in README.md.
 
 # Settings for every host.
 all:
@@ -23,6 +31,7 @@ oss:
   hosts:
     ossnode1:
       ansible_host: 10.2.26.1
+      # ansible_become_password: !vault |   (own bsradmin password, if any)
       license_file: inputs/registration/QA000018.oreg
       hostname: lustre-lc-oss1
       first_ha_node: true
@@ -38,6 +47,7 @@ oss:
 
     ossnode2:
       ansible_host: 10.2.26.2
+      # ansible_become_password: !vault |   (own bsradmin password, if any)
       license_file: inputs/registration/QA000019.oreg
       hostname: lustre-lc-oss2
       first_ha_node: false
@@ -66,6 +76,7 @@ mds:
   hosts:
     mdsnode1:
       ansible_host: 10.2.26.3
+      # ansible_become_password: !vault |   (own bsradmin password, if any)
       license_file: inputs/registration/QA00001C.oreg
       hostname: lustre-lc-mgs1
       first_ha_node: true
@@ -81,6 +92,7 @@ mds:
 
     mdsnode2:
       ansible_host: 10.2.26.4
+      # ansible_become_password: !vault |   (own bsradmin password, if any)
       license_file: inputs/registration/QA00001D.oreg
       hostname: lustre-lc-mgs2
       first_ha_node: false
@@ -116,11 +128,13 @@ cluster_witness:
   hosts:
     witness-oss:
       ansible_host: 10.2.26.6
+      # ansible_become_password: !vault |   (own bsradmin password, if any)
       hostname: win-ent-witness
       role: oss
       witness_instance: 0
     witness-mds:
       ansible_host: 10.2.26.6
+      # ansible_become_password: !vault |   (own bsradmin password, if any)
       hostname: win-ent-witness
       role: mds
       witness_instance: 1
