@@ -1,0 +1,134 @@
+# Stennis site inventory. Values marked TODO must be confirmed before running.
+# See inventory.yaml.example for documentation of each field.
+#
+# bsradmin passwords: every node uses the one in the bsradminpass file unless
+# its entry below sets ansible_become_password. To give a node its own,
+# encrypt it and replace that node's commented line with the output:
+#   ansible-vault encrypt_string --vault-password-file sensitive/vaultpass \
+#       --name ansible_become_password '<bsradmin password of the node>'
+# Both witness entries share one host, so both need the same value. See
+# "Per-host passwords" in README.md.
+
+# Settings for every host.
+all:
+  vars:
+    ntp_servers:
+      - time.nist.gov
+      - tick.usno.navy.mil
+    # This cluster lacks a KMIP
+    # kmip_host: 
+    # kmip_zone:
+    # Name of the Lustre file system. The existing targets were formatted
+    # as lustrefs (lustrefs-MDT0000, lustrefs-OST0000).
+    filesystem_name: lustrefs
+
+oss:
+  hosts:
+    ossnode1:
+      ansible_host: 10.24.0.162
+      # ansible_become_password: !vault |   (own bsradmin password, if any)
+      license_file: inputs/registration/ZZ0001HM.oreg
+      hostname: lagoon-oss1
+      first_ha_node: true
+      ha_peer_ipaddr: 10.24.0.164
+      admin_iface: ens259f0
+      hb_iface: ens259f1
+      hb_iface_ipaddr: 192.255.0.1/24
+      ipmi_ip_address: 10.24.0.163
+      configure_ipmi: false
+      ib_addrs:
+        ib0: 192.168.100.11/24
+        ib1: null
+
+    ossnode2:
+      ansible_host: 10.20.0.164
+      # ansible_become_password: !vault |   (own bsradmin password, if any)
+      license_file: inputs/registration/ZZ0001HN.oreg
+      hostname: lagoon-oss2
+      first_ha_node: false
+      ha_peer_ipaddr: 10.20.0.162
+      admin_iface: ens259f0
+      hb_iface: ens259f1
+      hb_iface_ipaddr: 192.255.0.2/24
+      ipmi_ip_address: 10.20.0.165
+      configure_ipmi: false
+      ib_addrs:
+        ib0: 192.168.100.12/24
+        ib1: null
+  vars:
+    witness_instance: 0 # hiavd 4746, confd 2379/2380
+    zpools:
+      - oss01
+    lustre_targets:
+      - pool: oss01
+        dataset: ost01
+        role: ost
+        # The OST was formatted as index 0 (lustrefs-OST0000); without this
+        # the index would come from the dataset name (ost01 -> 1).
+        index: 0
+
+mds:
+  hosts:
+    mdsnode1:
+      ansible_host: 10.20.0.158
+      # ansible_become_password: !vault |   (own bsradmin password, if any)
+      license_file: inputs/registration/ZZ0001HO.oreg
+      hostname: emission-mds1
+      first_ha_node: true
+      ha_peer_ipaddr: 10.20.0.160
+      admin_iface: ens259f0
+      hb_iface: ens259f1
+      hb_iface_ipaddr: 192.255.0.1/24
+      ipmi_ip_address: 10.20.0.159
+      configure_ipmi: false
+      ib_addrs:
+        ib0: 192.168.100.13/24
+        ib1: null
+
+    mdsnode2:
+      ansible_host: 10.20.0.160
+      # ansible_become_password: !vault |   (own bsradmin password, if any)
+      license_file: inputs/registration/ZZ0001HP.oreg
+      hostname: emission-mds2
+      first_ha_node: false
+      ha_peer_ipaddr: 10.20.0.158
+      admin_iface: ens259f0
+      hb_iface: ens259f1
+      hb_iface_ipaddr: 192.255.0.2/24
+      ipmi_ip_address: 10.20.0.161
+      configure_ipmi: false
+      ib_addrs:
+        ib0: 192.168.100.14/24
+        ib1: null
+  vars:
+    witness_instance: 1 # hiavd 4747, confd 2381/2382
+    zpools:
+      - mgs01
+    lustre_targets:
+      - pool: mgs01
+        dataset: mgsmdt01
+        role: mgsmdt
+        # The file system's first MDT must be index 0; without this the
+        # index would come from the dataset name (mgsmdt01 -> 1).
+        index: 0
+
+cluster_witness:
+  hosts:
+    witness-oss:
+      ansible_host: 10.20.0.156
+      # ansible_become_password: !vault |   (own bsradmin password, if any)
+      hostname: emission-witness1
+      role: oss
+      witness_instance: 0
+    witness-mds:
+      ansible_host: 10.20.0.156
+      # ansible_become_password: !vault |   (own bsradmin password, if any)
+      hostname: emission-witness1
+      role: mds
+      witness_instance: 1
+
+lustre_nodes:
+  children:
+    oss:
+    mds:
+    cluster_witness:
